@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}我的订单{% endblock %}
+{% block content %}
+<h2>我的订单</h2>
+<table class="data-table">
+  <tr><th>订单号</th><th>演出名称</th><th>地点</th><th>演出日期</th><th>票数</th><th>金额</th><th>状态</th><th>收货信息</th><th>持票人</th></tr>
+  {% for o in orders %}
+  <tr>
+    <td>{{ o.order_no }}</td>
+    <td>{{ o.show_name }}</td>
+    <td>{{ o.city_name }}·{{ o.venue_name }}</td>
+    <td>{{ o.show_time.strftime('%Y-%m-%d %H:%M') }}</td>
+    <td>{{ o.ticket_count }}</td>
+    <td>¥{{ '%.2f'|format(o.total_amount) }}</td>
+    <td><span class="badge o{{ o.order_status }}">{{ ORDER_STATUS_NAMES[o.order_status] }}</span></td>
+    <td class="small">{{ o.receiver_name }} {{ o.phone }}<br>{{ o.address_detail }}</td>
+    <td class="small">
+      {% for it in items_by_order.get(o.order_id, []) %}
+        {{ it.attendee_name }}（{{ ID_TYPE_NAMES[it.id_type] }}）<br>
+      {% endfor %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="9" class="empty">暂无订单，去 <a href="{{ url_for('show_list') }}">演出列表</a> 看看吧</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

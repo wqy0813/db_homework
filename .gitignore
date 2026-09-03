@@ -1,0 +1,20 @@
+# ===== 本机 MySQL 数据库数据目录（机器相关、体积大，绝不上传）=====
+.mysql/
+
+# ===== Python 缓存/虚拟环境 =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ===== 临时/日志文件 =====
+*.log
+reset_log.txt
+
+# ===== 编辑器/系统杂项 =====
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+~$*.docx

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}登录 - 演出票务{% endblock %}
+{% block content %}
+<div class="card login-card">
+  <h2>用户登录</h2>
+  <form method="post">
+    <label>角色</label>
+    <div class="role-switch">
+      <label><input type="radio" name="role" value="user" checked> 用户</label>
+      <label><input type="radio" name="role" value="admin"> 管理员</label>
+    </div>
+    <label>用户名</label>
+    <input name="username" required placeholder="如 zhang_san / admin">
+    <label>密码</label>
+    <input name="password" type="password" required placeholder="演示口令 123456">
+    <button class="btn" type="submit">登 录</button>
+  </form>
+  <div class="hint">
+    演示账号：用户 <b>zhang_san / li_si / wang_wu / zhao_liu / chen_qi</b>，
+    管理员 <b>admin</b>；口令均为 <b>123456</b>。<br>
+    游客可不登录直接浏览 <a href="{{ url_for('show_list') }}">演出列表</a>。
+  </div>
+</div>
+{% endblock %}

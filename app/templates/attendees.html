@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}常用购票人{% endblock %}
+{% block content %}
+<h2>常用购票人</h2>
+<div class="card">
+  <h3>新增购票人</h3>
+  <form method="post" class="inline-form">
+    <input type="hidden" name="action" value="add">
+    <input name="attendee_name" placeholder="姓名" required>
+    <select name="id_type" required>
+      <option value="1">身份证</option><option value="2">护照</option>
+      <option value="3">港澳通行证</option><option value="4">台胞证</option><option value="5">军官证</option>
+    </select>
+    <input name="id_no" placeholder="证件号" required>
+    <button class="btn" type="submit">添加</button>
+  </form>
+</div>
+<table class="data-table">
+  <tr><th>姓名</th><th>证件类型</th><th>证件号</th><th>操作</th></tr>
+  {% for a in attendees %}
+  <tr>
+    <td>{{ a.attendee_name }}</td>
+    <td>{{ ID_TYPE_NAMES[a.id_type] }}</td>
+    <td>{{ a.id_no }}</td>
+    <td>
+      <form method="post" style="display:inline" onsubmit="return confirm('确认删除该购票人？')">
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="attendee_id" value="{{ a.attendee_id }}">
+        <button class="btn-danger" type="submit">删除</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="empty">暂无购票人</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
