@@ -1,0 +1,254 @@
+[
+ {
+  "case": "T1-UI",
+  "name": "首页标题\"演出巡演\"",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T1-UI",
+  "name": "巡演卡片网格渲染",
+  "pass": true,
+  "detail": "cards=82"
+ },
+ {
+  "case": "T1-UI",
+  "name": "卡片主演🎤徽标",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T1-UI",
+  "name": "\"其他单场演出\"含威尼斯商人",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T2-UI",
+  "name": "关键词\"周杰伦\"仅1卡",
+  "pass": true,
+  "detail": "cards=1"
+ },
+ {
+  "case": "T2-UI",
+  "name": "类型=演唱会",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T2-UI",
+  "name": "演唱会+北京组合",
+  "pass": true,
+  "detail": "cards=4"
+ },
+ {
+  "case": "T3-UI",
+  "name": "周杰伦详情(主演/城市站标题)",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T3-UI",
+  "name": "城市站列表>=7",
+  "pass": true,
+  "detail": "stations=7"
+ },
+ {
+  "case": "T3-UI",
+  "name": "点北京站→演出详情",
+  "pass": true,
+  "detail": "url=http://127.0.0.1:5000/app/#/shows/1"
+ },
+ {
+  "case": "T4-UI",
+  "name": "名称/票价区间380-1980",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T4-UI",
+  "name": "介绍图片>=2",
+  "pass": true,
+  "detail": "images=3"
+ },
+ {
+  "case": "T4-UI",
+  "name": "场次卡片=2",
+  "pass": true,
+  "detail": "sessions=2"
+ },
+ {
+  "case": "T4-UI",
+  "name": "售罄票档标记",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T4-UI",
+  "name": "游客看到\"登录后即可购票\"",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T4-UI",
+  "name": "预售场次游客可见状态无购票按钮",
+  "pass": true,
+  "detail": "{\"hasTag\":true,\"hasBuyBtn\":false}"
+ },
+ {
+  "case": "T5-UI",
+  "name": "错误密码提示\"用户名或密码错误\"",
+  "pass": true,
+  "detail": "login-failed-text=false"
+ },
+ {
+  "case": "T5-UI",
+  "name": "用户登录成功(zhang_san（用户）)",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T5-UI",
+  "name": "用户导航菜单",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T5-UI",
+  "name": "退出回游客态(登录按钮)",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T5-UI",
+  "name": "管理员登录成功(显示管理员身份)",
+  "pass": true,
+  "detail": "shows=系统管理员"
+ },
+ {
+  "case": "T5-UI",
+  "name": "管理员导航(演出管理/销售统计)",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T13-UI",
+  "name": "用户登录准备",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T13-UI",
+  "name": "用户访问/admin/shows被拦截回/shows",
+  "pass": true,
+  "detail": "url=http://127.0.0.1:5000/app/#/shows"
+ },
+ {
+  "case": "T13-UI",
+  "name": "游客访问/orders跳登录",
+  "pass": true,
+  "detail": "url=http://127.0.0.1:5000/app/#/login"
+ },
+ {
+  "case": "T6-UI",
+  "name": "售票中场次购票表单(票档/票数/地址/购票人)",
+  "pass": true,
+  "detail": "{\"found\":true,\"sel\":3,\"cb\":38}"
+ },
+ {
+  "case": "T7-UI",
+  "name": "售罄票档下拉置灰（售罄）",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T7-UI",
+  "name": "预售场次提示开售时间且无购票按钮",
+  "pass": true,
+  "detail": "{\"alert\":\"该场次预售中，开售时间：2026-10-12 20:43，开售后方可购票\",\"hasBuyBtn\":false}"
+ },
+ {
+  "case": "T10-UI",
+  "name": "新增购票人成功",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T6-UI",
+  "name": "真实UI购票成功",
+  "pass": true,
+  "detail": "{\"ok\":true,\"reason\":\"order-created\",\"orderNo\":\"NO0EDBAE1D26D64C20A0D5B1D633CAD9\"}"
+ },
+ {
+  "case": "T8-UI",
+  "name": "订单表格渲染",
+  "pass": true,
+  "detail": "rows=20"
+ },
+ {
+  "case": "T8-UI",
+  "name": "持票人列(界面测试观众)",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T9-UI",
+  "name": "新增收货信息成功",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T11-UI",
+  "name": "演出管理列表",
+  "pass": true,
+  "detail": "rows=825"
+ },
+ {
+  "case": "T11-UI",
+  "name": "新建演出跳转编辑页",
+  "pass": true,
+  "detail": "url=http://127.0.0.1:5000/app/#/admin/shows/2947"
+ },
+ {
+  "case": "T11-UI",
+  "name": "场馆下拉仅北京场馆(无武汉)",
+  "pass": true,
+  "detail": "{\"found\":true,\"opts\":[\"国家体育场（鸟巢）\",\"北京工人体育场\",\"北京保利剧院\",\"北京市体育中心体育场\",\"北京大剧院\",\"北京体育馆\",\"北京国际演艺中心（满规模）\"],\"hasWuhan\":false,\"hasBeijing\":true}"
+ },
+ {
+  "case": "T11-UI",
+  "name": "UI添加场次成功",
+  "pass": true,
+  "detail": "{\"ok\":true,\"venueSelected\":true,\"showTimeSet\":true,\"saleStartSet\":true,\"showTime\":\"2026-12-31 19:30:00\",\"saleStart\":\"2026-11-01 10:00:00\",\"bodyTail\":\"本城市）\\n开演时间\\n开售时间\\n添加场次\\n已有场次与票档\\n🗓 2026-12-31 19:30　📍 北京工人体育场　开售 2026-11-01 10:00\\n预售中\\n删除场次\\n票档\\n\\t\\n金额\\n\\t\\n总票数\\n\\t\\n已售\\n\\t\\n余票\\n\\t\\n操作\\nNo Data\\n为该场次添加票档\\n\\n场次已添加\"}"
+ },
+ {
+  "case": "T12-UI",
+  "name": "指标卡(订单数/张数/金额)",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "case": "T12-UI",
+  "name": "折线/饼/柱图canvas渲染",
+  "pass": true,
+  "detail": "canvas=3"
+ },
+ {
+  "case": "T12-UI",
+  "name": "TOP10表格",
+  "pass": true,
+  "detail": "rows=1"
+ },
+ {
+  "case": "T12-UI",
+  "name": "空区间统计接口成功返回零订单",
+  "pass": true,
+  "detail": "{\"ok\":true,\"groupsEmpty\":true,\"body\":\"API 空区间无订单且所有统计分组为空\"}"
+ },
+ {
+  "case": "T12-UI",
+  "name": "空区间图表分组均为空",
+  "pass": true,
+  "detail": "{\"ok\":true,\"groupsEmpty\":true,\"body\":\"API 空区间无订单且所有统计分组为空\"}"
+ }
+]

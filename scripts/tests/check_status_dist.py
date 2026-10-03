@@ -1,0 +1,48 @@
+# -*- coding: utf-8 -*-
+"""检查 show_status 分布与系列聚合状态。"""
+import sys, io
+import os
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+import pymysql
+from pymysql.cursors import DictCursor
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
+from config import DB_CONFIG  # noqa: E402
+
+conn = pymysql.connect(cursorclass=DictCursor, **DB_CONFIG)
+cur = conn.cursor()
+def q(sql, args=None):
+    cur.execute(sql, args or ())
+    return cur.fetchall()
+
+print("== show_item 的 show_status 分布（v_show_list 口径） ==")
+for r in q("SELECT show_status, COUNT(*) c FROM v_show_list GROUP BY show_status ORDER BY show_status"):
+    print(r)
+
+print("\n== show_session.sale_status 分布 ==")
+for r in q("SELECT sale_status, COUNT(*) c FROM show_session GROUP BY sale_status"):
+    print(r)
+
+print("\n== 系列聚合状态（与 /api/series 相同 SQL） ==")
+rows = q("""
+    SELECT st.status, COUNT(*) c FROM (
+      SELECT CASE
+        WHEN MAX(CASE WHEN vl.show_status=2 THEN 1 ELSE 0 END) > 0 THEN 2
+        WHEN MAX(CASE WHEN vl.show_status=1 THEN 1 ELSE 0 END) > 0 THEN 1
+        ELSE 3 END AS status
+      FROM show_series ser
+      JOIN show_item sh ON sh.series_id=ser.series_id
+      LEFT JOIN v_show_list vl ON vl.show_id=sh.show_id
+      GROUP BY ser.series_id
+    ) st GROUP BY st.status ORDER BY st.status""")
+for r in rows:
+    print(r)
+
+print("\n== 预售示例（show_status=1 的演出） ==")
+for r in q("SELECT show_id, show_name, show_status FROM v_show_list WHERE show_status=1 LIMIT 5"):
+    print(r)
+
+print("\n== 售罄示例（show_status=3 的演出） ==")
+for r in q("SELECT show_id, show_name, show_status FROM v_show_list WHERE show_status=3 LIMIT 5"):
+    print(r)
+conn.close()

@@ -8,9 +8,17 @@ __pycache__/
 .venv/
 venv/
 
+# ===== 前端依赖与本地构建产物 =====
+frontend/node_modules/
+frontend/dist/
+test_tools/node_modules/
+test_tools/shots/
+
 # ===== 临时/日志文件 =====
 *.log
 reset_log.txt
+sql/backups/
+docs/test-results/
 
 # ===== 编辑器/系统杂项 =====
 .vscode/
