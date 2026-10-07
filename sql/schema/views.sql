@@ -34,7 +34,9 @@ SELECT
   CASE
     WHEN MAX(se.sale_status = 2) > 0 THEN 2   -- 有场次售票中
     WHEN MAX(se.sale_status = 1) > 0 THEN 1   -- 否则有场次预售中
-    ELSE 3                                    -- 全部售罄
+    WHEN MAX(se.sale_status = 3) > 0 THEN 3   -- 否则有未来场次售罄
+    WHEN MAX(se.sale_status = 4) > 0 THEN 4   -- 全部场次已结束
+    ELSE 3
   END AS show_status
 FROM show_item s
 JOIN city c        ON c.city_id = s.city_id

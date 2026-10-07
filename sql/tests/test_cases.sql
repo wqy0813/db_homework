@@ -39,7 +39,7 @@ WHERE username = 'admin';
 -- ############################################################################
 
 -- TC-04 演出列表【全部】
--- 预期：8 行；每行含 名称/城市/类型/场馆(地点)/最近日期/最低价/最高价/状态
+-- 预期：7 行；每行含 名称/城市/类型/场馆(地点)/最近日期/最低价/最高价/状态
 SELECT * FROM v_show_list ORDER BY show_id;
 
 -- TC-05 演出列表【按城市筛选：北京 city_id=1】
@@ -57,10 +57,11 @@ SELECT * FROM v_show_list WHERE city_id = 2 AND category_id = 5;
 -- TC-08 列表字段核对【票价区间与售票状态】
 -- 预期：周杰伦 min_price=380.00 max_price=1980.00、状态“售票中”；
 --       雷雨(show 3) 首场售罄但加场预售中，按聚合规则
---       “有售票中→2；否则有预售中→1；全售罄→3”，show_status=1（预售中），属正确；
+--       “有售票中→2；否则有预售中→1；否则有未来售罄→3；全部结束→4”；
+--       雷雨 show_status=1（预售中），属正确；
 --       所有行状态文本无 NULL。
 SELECT show_id, show_name, min_price, max_price, show_status,
-       ELT(show_status, '预售中', '售票中', '售罄') AS status_text
+       ELT(show_status, '预售中', '售票中', '售罄', '已结束') AS status_text
 FROM v_show_list ORDER BY show_id;
 
 -- ############################################################################
@@ -86,10 +87,10 @@ SELECT image_url, sort_no FROM show_image
 WHERE show_id = 1 ORDER BY sort_no;
 
 -- TC-11 演出日期列表【若干场次】
--- 预期：周杰伦 2 个场次（30 天后售票中、60 天后预售中）；
---       海底小纵队 2 个场次。地点(场馆)随之显示。
+-- 预期：周杰伦 2 个场次（5 天后售票中、60 天后预售中）；
+--       只此青绿 2 个场次，其中一个已结束。地点(场馆)随之显示。
 SELECT se.session_id, se.show_time, v.venue_name, v.address,
-       ELT(se.sale_status,'预售中','售票中','售罄') AS status_text
+       ELT(se.sale_status,'预售中','售票中','售罄','已结束') AS status_text
 FROM show_session se
 JOIN venue v ON v.venue_id=se.venue_id
 WHERE se.show_id = 1 ORDER BY se.show_time;
@@ -293,8 +294,8 @@ SELECT * FROM show_item WHERE show_id = @test_show;
 
 -- TC-24 添加场次【若干演出日期】
 INSERT INTO show_session(show_id, venue_id, show_time, sale_start, sale_status) VALUES
-  (@test_show, 9, DATE_ADD(NOW(), INTERVAL 35 DAY), DATE_SUB(NOW(), INTERVAL 1 DAY), 2),
-  (@test_show, 9, DATE_ADD(NOW(), INTERVAL 36 DAY), DATE_ADD(NOW(), INTERVAL 8 DAY), 1);
+  (@test_show, 9, DATE_ADD(NOW(), INTERVAL 20 DAY), DATE_SUB(DATE_ADD(NOW(), INTERVAL 20 DAY), INTERVAL 30 DAY), 2),
+  (@test_show, 9, DATE_ADD(NOW(), INTERVAL 60 DAY), DATE_SUB(DATE_ADD(NOW(), INTERVAL 60 DAY), INTERVAL 30 DAY), 1);
 -- 预期：该演出 2 个场次
 SELECT session_id, show_time, sale_start, sale_status
 FROM show_session WHERE show_id = @test_show;
@@ -343,28 +344,27 @@ SELECT (SELECT COUNT(*) FROM show_session WHERE show_id=@test_show) AS sessions_
 -- ############################################################################
 
 -- TC-30 售票状态自动推进【模拟事件 ev_session_status 的逻辑】
--- 造两个测试场次：A 预售中但开售时间已过；B 售票中但票档全售罄
+-- 造两个测试场次：A 已开演；B 未开演但票档全售罄
 INSERT INTO show_session(show_id, venue_id, show_time, sale_start, sale_status)
-VALUES (1, 1, DATE_ADD(NOW(),INTERVAL 70 DAY), DATE_SUB(NOW(),INTERVAL 1 MINUTE), 1);
+VALUES (1, 1, DATE_SUB(NOW(),INTERVAL 1 MINUTE), DATE_SUB(NOW(),INTERVAL 30 DAY), 2);
 SET @se_a = LAST_INSERT_ID();
 INSERT INTO show_session(show_id, venue_id, show_time, sale_start, sale_status)
-VALUES (1, 1, DATE_ADD(NOW(),INTERVAL 71 DAY), DATE_SUB(NOW(),INTERVAL 2 DAY), 2);
+VALUES (1, 1, DATE_ADD(NOW(),INTERVAL 71 DAY), DATE_ADD(NOW(),INTERVAL 41 DAY), 1);
 SET @se_b = LAST_INSERT_ID();
 INSERT INTO ticket_tier(session_id, tier_name, price, total_seats, sold_seats)
 VALUES (@se_b, '测试全售罄档', 100.00, 10, 10);
 
 -- 执行与事件相同的两条推进语句：
-UPDATE show_session SET sale_status = 2
-WHERE sale_status = 1 AND sale_start <= NOW();
+UPDATE show_session SET sale_status = 4 WHERE show_time <= NOW();
 UPDATE show_session se SET se.sale_status = 3
-WHERE se.sale_status = 2
+WHERE se.show_time > NOW()
   AND EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id)  -- 须有票档
   AND NOT EXISTS (SELECT 1 FROM ticket_tier t
                   WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats > 0);
 
--- 预期：@se_a 状态=2(售票中，无票档不误判售罄)，@se_b 状态=3(售罄)
+-- 预期：@se_a 状态=4(已结束)，@se_b 状态=3(售罄)
 SELECT session_id, sale_status,
-       ELT(sale_status,'预售中','售票中','售罄') AS status_text
+       ELT(sale_status,'预售中','售票中','售罄','已结束') AS status_text
 FROM show_session WHERE session_id IN (@se_a, @se_b);
 
 -- 清理测试场次（票档随场次级联删除）

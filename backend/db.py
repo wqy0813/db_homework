@@ -7,7 +7,7 @@ from config import DB_CONFIG
 
 PLACEHOLDER_HASH = '$2b$10$0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 ID_TYPE_NAMES = {1: '身份证', 2: '护照', 3: '港澳通行证', 4: '台胞证', 5: '军官证'}
-STATUS_NAMES = {1: '预售中', 2: '售票中', 3: '售罄'}
+STATUS_NAMES = {1: '预售中', 2: '售票中', 3: '售罄', 4: '已结束'}
 ORDER_STATUS_NAMES = {1: '待支付', 2: '已支付', 3: '已取消', 4: '已退款'}
 
 

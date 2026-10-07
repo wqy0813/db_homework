@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """按场次时间、开售时间和余票重算演出销售状态。
 
-规则：已结束的场次为售罄（3）；一个系列最多选择一个有余票且已开售的城市站为在售（2）；
+规则：已结束场次为已结束（4）；卖完的未来场次为售罄（3）；
+一个系列最多选择一个有余票且已开售的城市站为在售（2）；
 其余未结束且有余票的站点为预售（1），无余票站点为售罄（3）。脚本可重复执行，--dry-run 只预览。
 """
 from __future__ import annotations
@@ -50,7 +51,7 @@ def plan_statuses(rows, now):
     for key, station_rows in stations.items():
         candidates = []
         for show_id in {r["show_id"] for r in station_rows}:
-            future = [r for r in station_rows if r["show_id"] == show_id and r["show_time"] >= now]
+            future = [r for r in station_rows if r["show_id"] == show_id and r["show_time"] > now]
             if any(r["sale_start"] <= now and int(r["remain"]) > 0 for r in future):
                 candidates.append((min(r["show_time"] for r in future), show_id))
         if candidates:
@@ -61,8 +62,8 @@ def plan_statuses(rows, now):
     for key, station_rows in stations.items():
         chosen_show = selected.get(key)
         for row in station_rows:
-            if row["show_time"] < now:
-                status = 3
+            if row["show_time"] <= now:
+                status = 4
             elif int(row["remain"]) <= 0:
                 status = 3
             elif chosen_show == row["show_id"] and row["sale_start"] <= now:
@@ -78,6 +79,21 @@ def validate(cur, now):
     errors = []
     cur.execute(
         """
+        SELECT COUNT(*) AS c FROM (
+          SELECT show_time, sale_start,
+                 LAG(show_time) OVER (ORDER BY show_time, session_id) AS prev_show_time,
+                 LAG(sale_start) OVER (ORDER BY show_time, session_id) AS prev_sale_start
+          FROM show_session
+        ) ordered_sessions
+        WHERE show_time > prev_show_time AND sale_start < prev_sale_start
+        """
+    )
+    release_order_errors = cur.fetchone()["c"]
+    if release_order_errors:
+        errors.append("开演更早的场次却更晚开售: %s" % release_order_errors)
+
+    cur.execute(
+        """
         SELECT series_id, SUM(show_status = 2) AS onsale_count
         FROM v_show_list
         WHERE series_id IS NOT NULL
@@ -89,22 +105,63 @@ def validate(cur, now):
     if duplicate_series:
         errors.append("系列存在多个在售站点: %s" % duplicate_series[:5])
 
-    cur.execute("SELECT COUNT(*) AS c FROM show_session WHERE show_time < %s AND sale_status <> 3", (now,))
+    cur.execute("SELECT COUNT(*) AS c FROM show_session WHERE show_time <= %s AND sale_status <> 4", (now,))
     past_open = cur.fetchone()["c"]
     if past_open:
-        errors.append("已结束但仍未售罄的场次: %s" % past_open)
+        errors.append("已结束但状态不是 4 的场次: %s" % past_open)
+
+    cur.execute(
+        "SELECT COUNT(*) AS c FROM show_session WHERE show_time > %s AND sale_status = 4",
+        (now,),
+    )
+    future_ended = cur.fetchone()["c"]
+    if future_ended:
+        errors.append("尚未开演但状态为已结束的场次: %s" % future_ended)
 
     cur.execute(
         """
-        SELECT sh.show_id, sh.series_id, SUM(GREATEST(t.total_seats-t.sold_seats, 0)) AS remain
+        SELECT COUNT(*) AS c
+        FROM show_session se
+        WHERE se.show_time > %s AND se.sale_status = 3
+          AND EXISTS (
+            SELECT 1 FROM ticket_tier t
+            WHERE t.session_id = se.session_id
+              AND t.total_seats - t.sold_seats > 0
+          )
+        """,
+        (now,),
+    )
+    future_stocked_sold_out = cur.fetchone()["c"]
+    if future_stocked_sold_out:
+        errors.append("未来售罄场次仍有余票: %s" % future_stocked_sold_out)
+
+    cur.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM show_session se
+        WHERE se.sale_status = 2
+          AND (se.show_time <= %s OR se.sale_start > %s)
+        """,
+        (now, now),
+    )
+    invalid_onsale = cur.fetchone()["c"]
+    if invalid_onsale:
+        errors.append("售票中场次尚未开售或已结束: %s" % invalid_onsale)
+
+    cur.execute(
+        """
+        SELECT sh.show_id, sh.series_id,
+               SUM(CASE WHEN se.show_time > %s
+                        THEN GREATEST(t.total_seats-t.sold_seats, 0) ELSE 0 END) AS future_remain
         FROM show_item sh
         JOIN show_session se ON se.show_id = sh.show_id
         LEFT JOIN ticket_tier t ON t.session_id = se.session_id
         GROUP BY sh.show_id, sh.series_id
         HAVING MAX(se.sale_status = 3) = 1
            AND MAX(se.sale_status IN (1, 2)) = 0
-           AND remain > 0
-        """
+           AND future_remain > 0
+        """,
+        (now,),
     )
     inconsistent_soldout = cur.fetchall()
     if inconsistent_soldout:
@@ -144,16 +201,6 @@ def main():
 
         for session_id, status in plan.items():
             cur.execute("UPDATE show_session SET sale_status=%s WHERE session_id=%s", (status, session_id))
-        # 历史场次和没有余票的场次统一将票档余票归零，保持状态与票档一致。
-        cur.execute(
-            """
-            UPDATE ticket_tier t
-            JOIN show_session se ON se.session_id = t.session_id
-            SET t.sold_seats = t.total_seats
-            WHERE se.sale_status = 3 AND se.show_time < %s
-            """,
-            (now,),
-        )
         errors = validate(cur, now)
         if errors:
             conn.rollback()

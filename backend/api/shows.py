@@ -112,6 +112,8 @@ def series_list():
                CASE
                  WHEN MAX(CASE WHEN vl.show_status=2 THEN 1 ELSE 0 END) > 0 THEN 2
                  WHEN MAX(CASE WHEN vl.show_status=1 THEN 1 ELSE 0 END) > 0 THEN 1
+                 WHEN MAX(CASE WHEN vl.show_status=3 THEN 1 ELSE 0 END) > 0 THEN 3
+                 WHEN MAX(CASE WHEN vl.show_status=4 THEN 1 ELSE 0 END) > 0 THEN 4
                  ELSE 3
                END AS status
         FROM show_series ser
@@ -152,7 +154,13 @@ def series_detail(series_id):
                COUNT(se.session_id) AS session_count,
                MIN(vl.min_price) AS min_price,
                MAX(vl.max_price) AS max_price,
-               MAX(vl.show_status) AS show_status,
+               CASE
+                 WHEN MAX(CASE WHEN vl.show_status=2 THEN 1 ELSE 0 END) > 0 THEN 2
+                 WHEN MAX(CASE WHEN vl.show_status=1 THEN 1 ELSE 0 END) > 0 THEN 1
+                 WHEN MAX(CASE WHEN vl.show_status=3 THEN 1 ELSE 0 END) > 0 THEN 3
+                 WHEN MAX(CASE WHEN vl.show_status=4 THEN 1 ELSE 0 END) > 0 THEN 4
+                 ELSE 3
+               END AS show_status,
                GROUP_CONCAT(DISTINCT DATE_FORMAT(se.show_time,'%%m.%%d')
                             ORDER BY se.show_time SEPARATOR ' / ') AS show_dates,
                (SELECT MIN(se2.show_time) FROM show_session se2

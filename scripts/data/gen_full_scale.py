@@ -4,6 +4,7 @@
   - 城市 100+ 个；
   - 用户 10 万（f000001..f100000，每人一个收货地址）；
   - 约 1000 个演出场次、~400 个演出项目、每场 4 档票、场均 5000 座；
+  - 场次状态目标分布：45% 已结束、15% 售罄、10% 售票中、30% 预售中；
   - 过去 365 天约 100 万张已售票（~40 万订单、100 万购票人），
     周末销量更高，自动维护余票/限购/金额/sales_daily。
 可重复执行（按标记清理：f% 用户、F% 订单、poster '/img/full/' 演出）。
@@ -19,6 +20,7 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from session_schedule import SOLD_OUT, bucket_for_index, sale_start_for, show_day_for_status  # noqa: E402
 
 random.seed(7)
 
@@ -132,6 +134,7 @@ def main():
     today = date.today()
     show_cache = {}          # (ip, city_id) -> show_id
     tiers_mem = []           # 票档内存
+    sold_out_sessions = set()
     sess_cnt = 0
     while sess_cnt < TARGET_SESSIONS:
         cat = random.choices([1, 2, 3, 4, 5, 6, 7], weights=[4, 2, 2, 2, 2, 1, 1])[0]
@@ -153,14 +156,15 @@ def main():
         if cur.fetchone()[0] >= 3:
             continue
         vid = venue_of_city[cid]
-        # 场次分散在过去一年为主（保证历史 365 天有在售场次），少量未来（供浏览/购票演示）
-        show_day = today + timedelta(days=random.randint(-365, 60))
+        status = bucket_for_index(sess_cnt, TARGET_SESSIONS)
+        show_day = show_day_for_status(status, today, random)
         show_dt = datetime.combine(show_day, dtime(19, 30))
-        sale_dt = show_dt - timedelta(days=random.randint(40, 90))
-        status = 1 if sale_dt > datetime.now() else 2
+        sale_dt = sale_start_for(show_dt)
         cur.execute("""INSERT INTO show_session(show_id,venue_id,show_time,sale_start,sale_status)
                        VALUES(%s,%s,%s,%s,%s)""", (sid, vid, show_dt, sale_dt, status))
         seid = cur.lastrowid
+        if status == SOLD_OUT:
+            sold_out_sessions.add(seid)
         for tname, price, total in TIERS[cat]:
             cur.execute("""INSERT INTO ticket_tier(session_id,tier_name,price,total_seats,sold_seats)
                            VALUES(%s,%s,%s,%s,0)""", (seid, tname, price, total))
@@ -242,6 +246,9 @@ def main():
     flush()
 
     print('      回写余票 / 汇总 / 状态 ...')
+    for tier in tiers_mem:
+        if tier['sid'] in sold_out_sessions:
+            tier['sold'] = tier['total']
     cur.executemany("UPDATE ticket_tier SET sold_seats=%s WHERE tier_id=%s",
                     [(t['sold'], t['tid']) for t in tiers_mem])
     # 销售汇总按全部已支付订单权威重建（TRUNCATE 保证重复执行不重复累加）
@@ -250,9 +257,9 @@ def main():
                    SELECT DATE(pay_time), COUNT(*), SUM(ticket_count), SUM(total_amount)
                    FROM ticket_order WHERE order_status=2 AND pay_time IS NOT NULL
                    GROUP BY DATE(pay_time)""")
-    cur.execute("UPDATE show_session SET sale_status=2 WHERE sale_status=1 AND sale_start<=NOW()")
+    cur.execute("UPDATE show_session SET sale_status=4 WHERE show_time<=NOW()")
     cur.execute("""UPDATE show_session se SET se.sale_status=3
-                   WHERE se.sale_status=2
+                   WHERE se.show_time>NOW()
                      AND EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id)
                      AND NOT EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
     conn.commit()

@@ -208,12 +208,20 @@ def main():
                    SELECT DATE(pay_time), COUNT(*), SUM(ticket_count), SUM(total_amount)
                    FROM ticket_order WHERE order_status=2 AND pay_time IS NOT NULL
                    GROUP BY DATE(pay_time)""")
-    cur.execute("UPDATE show_session SET sale_status=2 WHERE sale_status=1 AND sale_start<=NOW()")
+    cur.execute("UPDATE show_session SET sale_status=4 WHERE show_time<=NOW()")
     cur.execute("""UPDATE show_session se SET se.sale_status=3
-                   WHERE se.sale_status=2
+                   WHERE se.show_time>NOW()
                      AND EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id)
                      AND NOT EXISTS (SELECT 1 FROM ticket_tier t
                                      WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
+    cur.execute("""UPDATE show_session se SET se.sale_status=2
+                   WHERE se.show_time>NOW() AND se.sale_start<=NOW()
+                     AND EXISTS (SELECT 1 FROM ticket_tier t
+                                 WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
+    cur.execute("""UPDATE show_session se SET se.sale_status=1
+                   WHERE se.show_time>NOW() AND se.sale_start>NOW()
+                     AND EXISTS (SELECT 1 FROM ticket_tier t
+                                 WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
     conn.commit()
 
     # 汇总

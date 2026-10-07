@@ -2,6 +2,7 @@
 """管理员接口：演出/场次/票档的查询与增删改。"""
 import os
 import uuid
+from datetime import datetime, timedelta
 
 import pymysql
 from flask import Blueprint, current_app, request
@@ -193,8 +194,12 @@ def create_session():
     b = request.get_json(silent=True) or request.form
     show_id = int(b.get('show_id'))
     show_time = (b.get('show_time') or '').replace('T', ' ')
-    sale_start = (b.get('sale_start') or '').replace('T', ' ')
     try:
+        try:
+            parsed_show_time = datetime.strptime(show_time, '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            parsed_show_time = datetime.strptime(show_time, '%Y-%m-%d %H:%M')
+        sale_start = parsed_show_time - timedelta(days=30)
         show = q("SELECT city_id FROM show_item WHERE show_id=%s", (show_id,), one=True)
         venue = q("SELECT city_id FROM venue WHERE venue_id=%s", (int(b.get('venue_id')),), one=True)
         if not show:

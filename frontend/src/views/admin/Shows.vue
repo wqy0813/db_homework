@@ -68,7 +68,7 @@ const cities = ref([])
 const cats = ref([])
 const loading = ref(false)
 const form = reactive({ show_name: '', category_id: null, city_id: null, poster_url: '', description: '' })
-const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info' }[s])
+const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 
 async function load() {
   loading.value = true

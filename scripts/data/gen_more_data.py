@@ -1,15 +1,16 @@
 ﻿# -*- coding: utf-8 -*-
 """
 批量演示数据生成器 —— 连接 ticket_sales 库，生成接近真实规模的演示数据：
-  - 城市补到 35 个、场馆 ~45 个；
-  - 新增约 40 场演出、~80 个场次、~300 个票档；
+  - 城市补到 35 个；
+  - 新增 49 个演出、约 65 个场次、约 270 个票档；
+  - 场次目标分布：45% 已结束、15% 售罄、10% 售票中、30% 预售中；
   - 300 个用户（含收货地址）；
   - 过去 90 天约 1000+ 笔已支付历史订单（周末更多）、约 2500+ 张票，
     分布在各城市/类型/日期，自动扣减余票、写订单明细（每人每场次1张）；
   - 购票请求日志（成功+失败）；
   - 重建销售日汇总 sales_daily、刷新场次售票状态。
 可重复执行：每次先清理上一批批量数据（订单号以 B 开头、user_id>5、show_id>8），
-           保留 seed 的 8 场核心演出与 5 个演示账号。
+           保留 seed 的 7 场核心演出与 5 个演示账号。
 运行：python scripts/data/gen_more_data.py
 """
 import os
@@ -21,6 +22,7 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from session_schedule import SOLD_OUT, bucket_for_index, sale_start_for, show_day_for_status  # noqa: E402
 
 random.seed(42)
 
@@ -172,8 +174,11 @@ def main():
     print('生成演出/场次/票档 ...')
     today = date.today()
     tiers = []  # 内存票档：dict 列表
-    seq = 0
-    for name, cat in SHOW_NAMES:
+    sold_out_sessions = set()
+    session_counts = [random.choice([1, 1, 2]) for _ in SHOW_NAMES]
+    total_sessions = sum(session_counts)
+    session_index = 0
+    for seq, (name, cat) in enumerate(SHOW_NAMES):
         cid, cname = random.choice(cities)
         vlist = venues_by_city.get(cid) or random.choice(list(venues_by_city.values()))
         imgs = CAT_IMAGES[cat]
@@ -186,24 +191,26 @@ def main():
         for k in range(1, random.randint(2, 4)):
             cur.execute("INSERT INTO show_image(show_id,image_url,sort_no) VALUES(%s,%s,%s)",
                         (show_id, imgs[k % len(imgs)], k))
-        # 1-2 个场次；同一演出内日期+时间必须互不相同（uk_session_show_time 唯一）
-        n_sess = random.choice([1, 1, 2])
+        # 每场演出生成 1-2 个同状态场次；销售时间统一提前 30 天。
+        n_sess = session_counts[seq]
         used_slots = set()
         for s in range(n_sess):
+            status = bucket_for_index(session_index, total_sessions)
             vid, vname = random.choice(vlist)
             while True:
-                show_day = today + timedelta(days=random.randint(-50, 90))
+                show_day = show_day_for_status(status, today, random)
                 hh, mm = random.choice([(19, 30), (20, 0), (14, 30), (19, 0)])
                 slot = (show_day, hh, mm)
                 if slot not in used_slots:
                     used_slots.add(slot)
                     break
             show_dt = datetime.combine(show_day, time(hh, mm))
-            sale_dt = show_dt - timedelta(days=random.randint(30, 75))
-            status = 1 if sale_dt > datetime.now() else 2
+            sale_dt = sale_start_for(show_dt)
             cur.execute("""INSERT INTO show_session(show_id,venue_id,show_time,sale_start,sale_status)
                            VALUES(%s,%s,%s,%s,%s)""", (show_id, vid, show_dt, sale_dt, status))
             session_id = cur.lastrowid
+            if status == SOLD_OUT:
+                sold_out_sessions.add(session_id)
             # 票档 3-5 个
             price_tiers = TIER_PRICES[cat]
             for tname, price in price_tiers:
@@ -213,7 +220,7 @@ def main():
                 tiers.append({'tier_id': cur.lastrowid, 'session_id': session_id,
                               'price': float(price), 'total': total, 'sold': 0,
                               'sale_start': sale_dt, 'show_time': show_dt})
-        seq += 1
+            session_index += 1
     conn.commit()
 
     # 把 seed 票档也纳入内存（用于售出）
@@ -305,6 +312,9 @@ def main():
 
     # ---------- 5. 回写票档已售、重建销售汇总、刷新场次状态 ----------
     print('回写余票 / 汇总 / 状态 ...')
+    for tier in tier_mem.values():
+        if tier['session_id'] in sold_out_sessions:
+            tier['sold'] = tier['total']
     cur.executemany("UPDATE ticket_tier SET sold_seats=%s WHERE tier_id=%s",
                     [(t['sold'], tid) for tid, t in tier_mem.items()])
     cur.execute("TRUNCATE TABLE sales_daily")
@@ -312,10 +322,10 @@ def main():
                    SELECT DATE(pay_time), COUNT(*), SUM(ticket_count), SUM(total_amount)
                    FROM ticket_order WHERE order_status=2 AND pay_time IS NOT NULL
                    GROUP BY DATE(pay_time)""")
-    # 场次状态：到开售时间 -> 售票中；有票档且全部售罄 -> 售罄
-    cur.execute("UPDATE show_session SET sale_status=2 WHERE sale_status=1 AND sale_start<=NOW()")
+    # Past sessions are closed; a future session with no inventory is sold out.
+    cur.execute("UPDATE show_session SET sale_status=4 WHERE show_time<=NOW()")
     cur.execute("""UPDATE show_session se SET se.sale_status=3
-                   WHERE se.sale_status=2
+                   WHERE se.show_time>NOW()
                      AND EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id)
                      AND NOT EXISTS (SELECT 1 FROM ticket_tier t
                                      WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
@@ -333,6 +343,10 @@ def main():
     print('  订单 ticket_order    :', cnt("SELECT COUNT(*) FROM ticket_order"))
     print('  票 order_item        :', cnt("SELECT COUNT(*) FROM order_item"))
     print('  购票请求 purchase_req :', cnt("SELECT COUNT(*) FROM purchase_request"))
+    print('  场次状态分布:')
+    cur.execute("SELECT sale_status, COUNT(*) AS c FROM show_session GROUP BY sale_status ORDER BY sale_status")
+    for status, count in cur.fetchall():
+        print('    %s: %s' % (status, count))
     cur.execute("SELECT COALESCE(SUM(total_amount),0), COALESCE(SUM(ticket_count),0) FROM ticket_order WHERE order_status=2")
     amt, tk = cur.fetchone()
     print('  累计售票 %s 张，销售额 ¥%.2f' % (tk, float(amt)))

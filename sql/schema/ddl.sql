@@ -133,7 +133,7 @@ CREATE TABLE show_session (
   venue_id    INT      NOT NULL COMMENT '演出场馆',
   show_time   DATETIME NOT NULL COMMENT '开演时间',
   sale_start  DATETIME NOT NULL COMMENT '开售时间(决定预售/售票中)',
-  sale_status TINYINT  NOT NULL DEFAULT 1 COMMENT '1预售中 2售票中 3售罄',
+  sale_status TINYINT  NOT NULL DEFAULT 1 COMMENT '1预售中 2售票中 3售罄 4已结束',
   PRIMARY KEY (session_id),
   UNIQUE KEY uk_session_show_time (show_id, show_time),
   KEY idx_session_show_time (show_id, show_time),
@@ -332,6 +332,8 @@ SELECT
   CASE
     WHEN MAX(se.sale_status = 2) > 0 THEN 2
     WHEN MAX(se.sale_status = 1) > 0 THEN 1
+    WHEN MAX(se.sale_status = 3) > 0 THEN 3
+    WHEN MAX(se.sale_status = 4) > 0 THEN 4
     ELSE 3
   END AS show_status
 FROM show_item s

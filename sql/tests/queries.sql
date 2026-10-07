@@ -42,12 +42,14 @@ SELECT
      WHERE se3.show_id = s.show_id) AS max_price,               -- 最高价
   /* 售票状态聚合：实时依据开售时间和余票计算，避免依赖事件调度器 */
   (SELECT CASE
-            WHEN SUM(CASE WHEN se4.sale_start <= NOW()
+            WHEN SUM(CASE WHEN se4.show_time > NOW() AND se4.sale_start <= NOW()
                                 AND EXISTS (SELECT 1 FROM ticket_tier t4
                                             WHERE t4.session_id=se4.session_id
                                               AND t4.total_seats-t4.sold_seats > 0)
                            THEN 1 ELSE 0 END) > 0 THEN 2
-            WHEN SUM(CASE WHEN se4.sale_start > NOW() THEN 1 ELSE 0 END) > 0 THEN 1
+            WHEN SUM(CASE WHEN se4.sale_start > NOW() AND se4.show_time > NOW() THEN 1 ELSE 0 END) > 0 THEN 1
+            WHEN SUM(CASE WHEN se4.show_time > NOW() THEN 1 ELSE 0 END) > 0 THEN 3
+            WHEN SUM(CASE WHEN se4.show_time <= NOW() THEN 1 ELSE 0 END) > 0 THEN 4
             ELSE 3
           END
      FROM show_session se4 WHERE se4.show_id = s.show_id) AS show_status
@@ -78,7 +80,9 @@ SELECT
   CASE
     WHEN MAX(se.sale_status = 2) > 0 THEN 2   -- 有场次售票中
     WHEN MAX(se.sale_status = 1) > 0 THEN 1   -- 否则有场次预售中
-    ELSE 3                                    -- 全部售罄
+    WHEN MAX(se.sale_status = 3) > 0 THEN 3   -- 否则有未来售罄场次
+    WHEN MAX(se.sale_status = 4) > 0 THEN 4   -- 全部已结束
+    ELSE 3
   END AS show_status
 FROM show_item s
 JOIN city c        ON c.city_id = s.city_id
@@ -87,6 +91,7 @@ LEFT JOIN show_series ser ON ser.series_id = s.series_id
 LEFT JOIN (
     SELECT se0.session_id, se0.show_id, se0.show_time,
            CASE
+             WHEN se0.show_time <= NOW() THEN 4
              WHEN se0.sale_start > NOW() THEN 1
              WHEN COALESCE(SUM(t0.total_seats-t0.sold_seats),0) > 0 THEN 2
              ELSE 3
@@ -141,6 +146,7 @@ ORDER BY sort_no, image_id;
 -- 3.3 演出日期列表（若干场次：时间、场馆、状态）
 SELECT se.session_id, se.show_time, v.venue_name, v.address,
        CASE
+         WHEN se.show_time <= NOW() THEN 4
          WHEN se.sale_start > NOW() THEN 1
          WHEN EXISTS (SELECT 1 FROM ticket_tier tx
                       WHERE tx.session_id=se.session_id

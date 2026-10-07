@@ -182,6 +182,8 @@ SELECT COUNT(*) FROM ticket_sales.ticket_order;
 
 当前仓库中的数据库可能已经由数据生成脚本扩充，数量不一定等于基础 seed 数据的数量。`sql/schema/views.sql` 通常不需要单独执行，因为 `ddl.sql` 已包含 3 个业务视图；如果视图被删除或需要单独重建，再执行该文件。
 
+升级已有数据库的场次状态时，先执行 `sql/migrations/phase5_session_status.sql`，再执行 `sql/schema/views.sql` 刷新演出列表视图，最后运行 `python scripts/data/rebalance_status.py` 重算售票中/预售中状态。迁移会统一调整开售时间，并把已开演场次标记为“已结束”；不会删除业务数据。
+
 ### 数据库连接配置
 
 默认配置在 `backend/config.py`：
@@ -321,6 +323,7 @@ http://127.0.0.1:5000/app/
 | `sql/tests/queries.sql` | 常用查询、购票事务和统计 SQL 示例 | 视语句而定，默认不建议直接全量执行 |
 | `sql/tests/test_cases.sql` | 约束、触发器、购票和统计测试 | 含写入、失败用例和清理语句，执行前阅读 |
 | `sql/migrations/phase4_series.sql` | 巡演/IP 结构升级 | 取决于脚本内容，执行前备份 |
+| `sql/migrations/phase5_session_status.sql` | 区分已结束与售罄，并将所有开售时间统一为开演前 30 天 | 会更新场次状态和开售时间，不删除数据 |
 | `sql/seed/phase4_seed_series.sql` | 巡演/IP 示例数据 | 会写入巡演相关数据 |
 
 数据库当前包含城市、类型、管理员、用户、场馆、巡演、演出、图片、场次、票档、收货信息、购票人、订单、订单明细、购票请求和销售日汇总等表；具体字段和外键以 `sql/schema/ddl.sql` 为准。

@@ -50,7 +50,7 @@ const keyword = ref('')
 const loading = ref(false)
 
 const statusName = (s) => STATUS_NAMES[s]
-const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info' }[s])
+const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 
 async function load() {
   loading.value = true

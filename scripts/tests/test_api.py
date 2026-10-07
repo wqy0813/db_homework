@@ -220,6 +220,22 @@ def t4():
     on_sale = [s for s in sessions if s['sale_status'] == 2]
     record('T4.8', '未登录(API 游客可读详情，购票需登录)', code == 200 and len(on_sale) >= 1,
            'on_sale=%d' % len(on_sale))
+    code, d = guest.get('/series')
+    series = d.get('data', {}).get('list', [])
+    if series:
+        series_id = series[0]['series_id']
+        detail_code, detail = guest.get('/series/%s' % series_id)
+        stations = detail.get('data', {}).get('stations', [])
+        statuses = [station.get('show_status') for station in stations]
+        expected = next((status for status in (2, 1, 3, 4) if status in statuses), 3)
+        aggregated = next((item.get('status') for item in series
+                           if item['series_id'] == series_id), None)
+        record('T4.9', '巡演列表与城市站状态按优先级聚合',
+               code == 200 and detail_code == 200 and aggregated == expected,
+               'series=%s stations=%s aggregate=%s expected=%s'
+               % (series_id, statuses, aggregated, expected))
+    else:
+        record('T4.9', '巡演列表与城市站状态按优先级聚合', False, '没有巡演数据')
 
 
 # ============================================================
@@ -416,6 +432,12 @@ def t11():
                                                         'sale_start': '2027-03-01 10:00'})
     seid = d.get('data', {}).get('session_id')
     record('T11.4b', '添加场次成功', code == 200 and d.get('code') == 0 and seid)
+    code, d = admin.get('/admin/shows/%d' % sid)
+    created_session = next((s for s in d.get('data', {}).get('sessions', [])
+                            if s['session_id'] == seid), {})
+    record('T11.4c', '开售时间由后端固定为开演前30天', code == 200
+           and created_session.get('sale_start', '').startswith('2027-04-01 19:30'),
+           'sale_start=%s' % created_session.get('sale_start'))
     # 添加票档
     code, d = admin.post('/admin/tier/create', json={'session_id': seid, 'tier_name': '测试票档A',
                                                      'price': 100, 'total_seats': 100})
@@ -427,7 +449,7 @@ def t11():
     # 再加场次+票档，然后删场次（级联删票档）
     code, d = admin.post('/admin/session/create', json={'show_id': sid, 'venue_id': 2,
                                                         'show_time': '2027-05-02 19:30',
-                                                        'sale_start': '2027-03-02 10:00'})
+                                                        'sale_start': '2027-04-02 19:30'})
     seid2 = d.get('data', {}).get('session_id')
     admin.post('/admin/tier/create', json={'session_id': seid2, 'tier_name': '测试票档B',
                                            'price': 200, 'total_seats': 50})

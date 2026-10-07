@@ -37,6 +37,7 @@
         <el-table-column label="状态" width="120">
           <template #default="{row}">
             <el-tag v-if="se.sale_status===1" type="warning">未开售</el-tag>
+            <el-tag v-else-if="se.sale_status===4" type="info">演出已结束</el-tag>
             <el-tag v-else-if="se.sale_status===3 || row.remain===0" type="info">该票档售罄</el-tag>
             <el-tag v-else type="success">在售</el-tag>
           </template>
@@ -88,7 +89,8 @@
         </template>
         <el-alert v-else-if="se.sale_status===1" type="warning" :closable="false"
                   :title="`该场次预售中，开售时间：${fmt(se.sale_start)}，开售后方可购票`" style="margin-top:10px" />
-        <el-alert v-else type="info" :closable="false" title="该场次已售罄" style="margin-top:10px" />
+        <el-alert v-else-if="se.sale_status===3" type="info" :closable="false" title="该场次已售罄" style="margin-top:10px" />
+        <el-alert v-else type="info" :closable="false" title="该场次已结束" style="margin-top:10px" />
       </template>
       <el-alert v-else type="info" :closable="false" style="margin-top:10px">
         <router-link to="/login">登录</router-link> 后即可购票
@@ -116,7 +118,7 @@ const tiers = ref({})
 
 const statusName = (s) => STATUS_NAMES[s]
 const idTypeName = (t) => ID_TYPE[t]
-const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info' }[s])
+const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 const fmt = (s) => s ? s.replace('T', ' ').slice(0, 16) : ''
 
 async function load() {

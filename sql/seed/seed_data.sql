@@ -94,21 +94,21 @@ INSERT INTO show_image (show_id, image_url, sort_no) VALUES
   (8,'/static/img/dance1.jpg',1),(8,'/static/img/dance2.jpg',2);
 
 -- ----------------------------------------------------------------------------
--- 六、演出场次（时间相对 NOW()，便于演示状态推进）
---   同一系列最多保留一个在售站；其它未结束站点为预售，历史/无余票场次为售罄。
+-- 六、演出场次（开售时间统一早于开演时间 30 天）
+--   2=售票中、1=预售中、3=未来场次售罄、4=已结束。
 -- ----------------------------------------------------------------------------
 INSERT INTO show_session (session_id, show_id, venue_id, show_time, sale_start, sale_status) VALUES
-  (1, 1, 1,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 30 DAY)), '19:30:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 7 DAY)), '10:00:00'),  2), -- 周杰伦 售票中
-  (2, 1, 1,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 60 DAY)), '20:00:00'), TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 10 DAY)), '10:00:00'), 1), -- 周杰伦 预售中
-  (3, 2, 3,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 20 DAY)), '19:00:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 3 DAY)), '10:00:00'),  2), -- 张学友 第一场
-  (4, 2, 3,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 21 DAY)), '19:30:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 3 DAY)), '10:00:00'),  1), -- 张学友 第二场（预售）
-  (5, 3, 11, TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 15 DAY)), '19:30:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 30 DAY)), '10:00:00'), 3), -- 雷雨 首场(售罄)
-  (6, 3, 11, TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 45 DAY)), '14:30:00'), TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 5 DAY)), '10:00:00'),  1), -- 雷雨 加场(预售中)
-  (7, 4, 5,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 5 DAY)), '19:35:00'),  TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 20 DAY)), '10:00:00'), 2), -- CBA
-  (10,6, 13, TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 25 DAY)), '10:00:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 60 DAY)), '10:00:00'), 2), -- 莫奈展
-  (11,7, 14, TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 18 DAY)), '19:30:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 5 DAY)), '10:00:00'),  2), -- 郎朗
-  (12,8, 15, TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 22 DAY)), '19:30:00'), TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 7 DAY)), '10:00:00'),  1), -- 只此青绿(预售中)
-  (13,8, 15, TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 23 DAY)), '14:00:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 15 DAY)), '10:00:00'), 2); -- 只此青绿(售票中)
+  (1, 1, 1,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 5 DAY)), '19:30:00'),  TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 25 DAY)), '19:30:00'), 2), -- 周杰伦 售票中
+  (2, 1, 1,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 60 DAY)), '20:00:00'), TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 30 DAY)), '20:00:00'), 1), -- 周杰伦 预售中
+  (3, 2, 3,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 20 DAY)), '19:00:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 10 DAY)), '19:00:00'), 2), -- 张学友 第一场
+  (4, 2, 3,  TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 75 DAY)), '19:30:00'), TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 45 DAY)), '19:30:00'), 1), -- 张学友 第二场（预售）
+  (5, 3, 11, TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 15 DAY)), '19:30:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 15 DAY)), '19:30:00'), 3), -- 雷雨 首场(售罄)
+  (6, 3, 11, TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 90 DAY)), '14:30:00'), TIMESTAMP(DATE(DATE_ADD(NOW(), INTERVAL 60 DAY)), '14:30:00'), 1), -- 雷雨 加场(预售中)
+  (7, 4, 5,  TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 3 DAY)), '19:35:00'),  TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 33 DAY)), '19:35:00'), 4), -- CBA 已结束
+  (10,6, 13, TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 7 DAY)), '10:00:00'),  TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 37 DAY)), '10:00:00'), 4), -- 莫奈展 已结束
+  (11,7, 14, TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 3 DAY)), '19:30:00'),  TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 33 DAY)), '19:30:00'), 4), -- 郎朗 已结束
+  (12,8, 15, TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 21 DAY)), '19:30:00'), TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 51 DAY)), '19:30:00'), 4), -- 只此青绿 已结束
+  (13,8, 15, TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 5 DAY)), '14:00:00'),  TIMESTAMP(DATE(DATE_SUB(NOW(), INTERVAL 35 DAY)), '14:00:00'), 4); -- 只此青绿 已结束
 
 -- ----------------------------------------------------------------------------
 -- 七、票档（tier_id 显式给出，方便订单引用）
@@ -214,7 +214,7 @@ INSERT INTO ticket_order
   (1,'NO20250101001',1, 1, 2, 1, 2, 1960.00, 2, DATE_SUB(NOW(),INTERVAL 2 DAY), DATE_SUB(NOW(),INTERVAL 2 DAY)),
   (2,'NO20250102001',2, 3,11, 3, 2, 1960.00, 2, DATE_SUB(NOW(),INTERVAL 3 DAY), DATE_SUB(NOW(),INTERVAL 3 DAY)),
   (3,'NO20250103001',1, 1, 3, 1, 3, 1740.00, 2, DATE_SUB(NOW(),INTERVAL 5 DAY), DATE_SUB(NOW(),INTERVAL 5 DAY)),
-  (4,'NO20250104001',3, 7,25, 4, 1,  380.00, 2, DATE_SUB(NOW(),INTERVAL 1 DAY), DATE_SUB(NOW(),INTERVAL 1 DAY)),
+  (4,'NO20250104001',3, 7,25, 4, 1,  380.00, 2, DATE_SUB(NOW(),INTERVAL 5 DAY), DATE_SUB(NOW(),INTERVAL 5 DAY)),
   (5,'NO20250105001',4,11,39, 5, 2, 1760.00, 2, DATE_SUB(NOW(),INTERVAL 4 DAY), DATE_SUB(NOW(),INTERVAL 4 DAY)),
   (6,'NO20250106001',5,13,47, 6, 2, 1360.00, 2, DATE_SUB(NOW(),INTERVAL 6 DAY), DATE_SUB(NOW(),INTERVAL 6 DAY)),
   (7,'NO20250107001',2,10,36, 3, 1,  298.00, 2, DATE_SUB(NOW(),INTERVAL 8 DAY), DATE_SUB(NOW(),INTERVAL 8 DAY)),
@@ -279,15 +279,20 @@ ON SCHEDULE EVERY 10 MINUTE
 COMMENT '自动推进演出场次售票状态'
 DO
 BEGIN
-  -- 已结束场次必须售罄；无余票场次也必须保持售罄。
+  -- 已结束场次与卖完的未来场次使用不同状态。
+  UPDATE show_session se
+  SET se.sale_status = 4
+  WHERE se.show_time <= NOW();
+
   UPDATE show_session se
   SET se.sale_status = 3
-  WHERE se.show_time < NOW()
-     OR (se.sale_status IN (1, 2) AND NOT EXISTS (
+  WHERE se.show_time > NOW()
+    AND EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id = se.session_id)
+    AND NOT EXISTS (
           SELECT 1 FROM ticket_tier t
           WHERE t.session_id = se.session_id
             AND t.total_seats - t.sold_seats > 0
-        ));
+        );
 END//
 DELIMITER ;
 

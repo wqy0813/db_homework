@@ -61,8 +61,8 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 
-// 大麦风格短标签：预售 / 在售 / 已售罄（映射系统 show_status 1/2/3）
-const STATUS_SHORT = { 1: '预售', 2: '在售', 3: '已售罄' }
+// 巡演状态短标签（映射系统 show_status 1/2/3/4）
+const STATUS_SHORT = { 1: '预售', 2: '在售', 3: '已售罄', 4: '已结束' }
 
 const router = useRouter()
 const series = ref([])
@@ -77,7 +77,7 @@ const loading = ref(false)
 const loadingShows = ref(false)
 
 const tagType = (cat) => ({ 1: 'danger', 2: 'warning', 3: 'success', 5: 'info', 6: 'primary', 7: 'warning' }[cat] || 'info')
-const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info' }[s])
+const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 
 async function load() {
   loading.value = true

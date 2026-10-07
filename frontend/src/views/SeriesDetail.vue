@@ -41,9 +41,9 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 
-// 大麦风格短标签：预售 / 在售 / 已售罄（映射系统 show_status 1/2/3）
-const STATUS_SHORT = { 1: '预售', 2: '在售', 3: '已售罄' }
-const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info' }[s])
+// 巡演状态短标签（映射系统 show_status 1/2/3/4）
+const STATUS_SHORT = { 1: '预售', 2: '在售', 3: '已售罄', 4: '已结束' }
+const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 
 const route = useRoute()
 const loading = ref(false)

@@ -89,7 +89,11 @@ def buy():
         if se['show_time'] <= now:
             raise BuyError('该场次已结束')
         if se['sale_status'] != 2:
-            raise BuyError('该场次当前不可购票（预售中或已售罄）')
+            if se['sale_status'] == 4:
+                raise BuyError('该场次已结束')
+            if se['sale_status'] == 3:
+                raise BuyError('该场次已售罄')
+            raise BuyError('该场次当前暂未开放购票')
         if se['sale_start'] > now:
             raise BuyError('演出尚未开售（预售中）')
         # 票档必须属于已锁定的场次；锁定票档行后再扣库存。

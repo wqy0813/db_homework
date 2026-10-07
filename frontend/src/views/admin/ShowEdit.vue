@@ -65,7 +65,9 @@
           </el-select>
         </el-form-item>
         <el-form-item label="开演时间"><el-date-picker v-model="seForm.show_time" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" /></el-form-item>
-        <el-form-item label="开售时间"><el-date-picker v-model="seForm.sale_start" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" /></el-form-item>
+        <el-form-item label="开售时间">
+          <span>{{ saleStartPreview || '选择开演时间后自动计算（开演前30天）' }}</span>
+        </el-form-item>
         <el-button type="danger" @click="addSession">添加场次</el-button>
       </el-form>
     </el-card>
@@ -115,7 +117,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import api from '../../api'
@@ -128,9 +130,17 @@ const cities = ref([])
 const categories = ref([])
 const showForm = reactive({ show_name: '', category_id: null, city_id: null, poster_url: '', description: '' })
 const imageForm = reactive({ image_url: '', sort_no: 0 })
-const seForm = reactive({ venue_id: null, show_time: null, sale_start: null })
+const seForm = reactive({ venue_id: null, show_time: null })
 const tierForm = reactive({})
-const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info' }[s])
+const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
+const saleStartPreview = computed(() => {
+  if (!seForm.show_time) return ''
+  const [date, time = '00:00:00'] = String(seForm.show_time).replace('T', ' ').split(' ')
+  const value = new Date(`${date}T${time}Z`)
+  if (Number.isNaN(value.getTime())) return ''
+  value.setUTCDate(value.getUTCDate() - 30)
+  return value.toISOString().slice(0, 16).replace('T', ' ')
+})
 // 兼容 Date 与字符串（v-model 已配 value-format 为字符串，此处兜底）
 function pad(n) { return String(n).padStart(2, '0') }
 function fmt(s) {
@@ -184,15 +194,14 @@ async function delImage(id) {
   ElMessage.success(r.msg); await load()
 }
 async function addSession() {
-  if (!seForm.venue_id || !seForm.show_time || !seForm.sale_start) return ElMessage.warning('请选择场馆、开演时间、开售时间')
+  if (!seForm.venue_id || !seForm.show_time) return ElMessage.warning('请选择场馆和开演时间')
   const r = await api.post('/admin/session/create', {
     show_id: Number(route.params.id),
     venue_id: seForm.venue_id,
-    show_time: fmt(seForm.show_time) + ':00',
-    sale_start: fmt(seForm.sale_start) + ':00'
+    show_time: fmt(seForm.show_time) + ':00'
   })
   ElMessage.success(r.msg)
-  Object.assign(seForm, { venue_id: null, show_time: null, sale_start: null })
+  Object.assign(seForm, { venue_id: null, show_time: null })
   load()
 }
 function setTier(session_id, key, val) {
