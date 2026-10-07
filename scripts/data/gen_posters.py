@@ -6,6 +6,7 @@
 """
 import os
 import sys
+import glob
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -44,6 +45,17 @@ CAT_COLOR = {
 }
 
 POSTER_W, POSTER_H = 400, 560
+
+
+def find_collected_poster(prefix, entity_id):
+    """Return a collected poster path when one exists, preserving its extension."""
+    pattern = os.path.join(OUT_DIR, '%s_%03d_poster.*' % (prefix, entity_id))
+    matches = sorted(glob.glob(pattern))
+    return matches[0] if matches else None
+
+
+def poster_url(path):
+    return '/static/img/posters/' + os.path.basename(path)
 
 # 已审核的本地真实素材。文件不存在时会自动跳过，不会阻断整批海报生成。
 ARTIST_IMAGES = {
@@ -164,10 +176,17 @@ def main():
     print('巡演数:', len(rows))
     n = 0
     for r in rows:
-        url = make_poster(r['series_id'], r['series_name'], r['main_artist'],
-                          r['category_id'], CAT_BG.get(r['category_id'], ['concert1.jpg']))
+        collected = find_collected_poster('series', r['series_id'])
+        if collected:
+            url = poster_url(collected)
+        else:
+            url = make_poster(r['series_id'], r['series_name'], r['main_artist'],
+                              r['category_id'], CAT_BG.get(r['category_id'], ['concert1.jpg']))
         cur.execute("UPDATE show_series SET poster_url=%s WHERE series_id=%s", (url, r['series_id']))
         n += 1
+    single_show = find_collected_poster('show', 30)
+    if single_show:
+        cur.execute("UPDATE show_item SET poster_url=%s WHERE show_id=30", (poster_url(single_show),))
     conn.commit()
     print('已生成并更新海报:', n, '张')
     # 验证
