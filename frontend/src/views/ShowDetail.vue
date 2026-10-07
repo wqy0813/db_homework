@@ -18,14 +18,6 @@
       </div>
     </el-card>
 
-    <h3 class="section-title">演出介绍（图片）</h3>
-    <div class="img-row">
-      <el-image v-for="(im, i) in data.images" :key="i" :src="im.image_url"
-                style="width:200px;height:130px;border-radius:10px" fit="cover"
-                :preview-src-list="data.images.map(x=>x.image_url)" :initial-index="i" />
-      <span v-if="data.images.length===0" class="muted">暂无介绍图片</span>
-    </div>
-
     <h3 class="section-title">演出日期与票档（{{ data.sessions.length }} 个场次）</h3>
     <el-card v-for="se in data.sessions" :key="se.session_id" shadow="never" class="session">
       <div class="session-head">
@@ -176,7 +168,6 @@ onMounted(load)
 .info h2 { margin-bottom: 10px; }
 .desc { color: #555; line-height: 1.7; margin-top: 12px; }
 .price-big { color: #e94b64; font-weight: bold; font-size: 18px; margin: 10px 0; }
-.img-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .session { margin-bottom: 14px; }
 .session-head { display: flex; justify-content: space-between; align-items: center; }
 </style>

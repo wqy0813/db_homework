@@ -51,13 +51,18 @@ def shows():
 
 @shows_bp.route('/shows/<int:show_id>')
 def show_detail(show_id):
-    show = q("""SELECT s.*, c.city_name, cat.category_name
+    show = q("""SELECT s.*, c.city_name, cat.category_name,
+                      ser.poster_url AS series_poster_url
                 FROM show_item s
                 JOIN city c ON c.city_id=s.city_id
                 JOIN category cat ON cat.category_id=s.category_id
+                LEFT JOIN show_series ser ON ser.series_id=s.series_id
                 WHERE s.show_id=%s""", (show_id,), one=True)
     if not show:
         return ok({'show': None, 'sessions': [], 'images': [], 'tiers': {}})
+    if show.get('series_poster_url'):
+        show['poster_url'] = show['series_poster_url']
+    show.pop('series_poster_url', None)
     pr = q("SELECT min_price,max_price,show_status,show_dates FROM v_show_list WHERE show_id=%s",
            (show_id,), one=True) or {}
     images = [_row(r) for r in q(

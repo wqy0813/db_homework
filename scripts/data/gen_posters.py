@@ -187,6 +187,12 @@ def main():
     single_show = find_collected_poster('show', 30)
     if single_show:
         cur.execute("UPDATE show_item SET poster_url=%s WHERE show_id=30", (poster_url(single_show),))
+    cur.execute("""
+        UPDATE show_item sh
+        JOIN show_series ser ON ser.series_id=sh.series_id
+        SET sh.poster_url=ser.poster_url
+        WHERE sh.series_id IS NOT NULL
+    """)
     conn.commit()
     print('已生成并更新海报:', n, '张')
     # 验证
