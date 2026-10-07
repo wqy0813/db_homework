@@ -1,13 +1,13 @@
 <template>
   <h2>演出巡演</h2>
   <el-card shadow="never" class="filter">
-    <el-select v-model="cityId" placeholder="全部城市" clearable @change="load" style="width:150px">
+    <el-select v-model="cityId" placeholder="全部城市" clearable style="width:150px">
       <el-option v-for="c in cities" :key="c.city_id" :label="c.city_name" :value="c.city_id" />
     </el-select>
-    <el-select v-model="catId" placeholder="全部类型" clearable @change="load" style="width:150px">
+    <el-select v-model="catId" placeholder="全部类型" clearable style="width:150px">
       <el-option v-for="c in cats" :key="c.category_id" :label="c.category_name" :value="c.category_id" />
     </el-select>
-    <el-select v-model="statusId" placeholder="全部状态" clearable @change="load" style="width:130px">
+    <el-select v-model="statusId" placeholder="全部状态" clearable style="width:130px">
       <el-option v-for="(n, v) in STATUS_SHORT" :key="v" :label="n" :value="Number(v)" />
     </el-select>
     <el-input v-model="keyword" placeholder="搜索巡演/艺人" clearable @keyup.enter="load" style="width:220px" />
