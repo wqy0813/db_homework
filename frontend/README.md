@@ -15,9 +15,9 @@
 ## 生产构建（单服务部署，答辩推荐）
 
 ```bash
-npm run build          # 产物输出到 frontend/dist
+  npm run build          # 直接更新 ../backend/static_web
 ```
-构建后，把 `dist` 内容复制到 `backend/static_web/`（已按此约定配置 Flask 托管）。
+构建会先清理旧 hash 资源，再直接输出到 `backend/static_web/`，无需手动复制。
 之后只需启动 Flask 一个服务：
 
 - 新版前端入口：**http://127.0.0.1:5000/app/**

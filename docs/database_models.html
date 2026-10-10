@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>演出门票销售系统分域数据库模型</title>
+  <style>
+    :root{--ink:#19324a;--muted:#63758a;--blue:#5c9bd5;--blue-dark:#2f75b5;--blue-soft:#eaf3fb;--gold:#f2c66d;--gold-soft:#fff4d8;--line:#6f8da7;--paper:#f7fafc;--profile:#4b78a8;--show:#398a70;--order:#c27b2b;--log:#8a5aa8;--derived:#a05a5a}
+    *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif}
+    header{padding:24px 32px 14px;background:#fff;border-bottom:1px solid #dbe5ee} h1{margin:0 0 6px;font-size:24px;font-weight:600} header p{margin:0;color:var(--muted);font-size:14px}
+    .toolbar{display:flex;gap:8px;padding:12px 32px;background:#fff;border-bottom:1px solid #dbe5ee;position:sticky;top:0;z-index:2} button{border:1px solid #b6c7d6;background:#fff;color:var(--ink);padding:8px 14px;border-radius:4px;cursor:pointer;font-size:14px} button.active{background:var(--blue-dark);color:#fff;border-color:var(--blue-dark)}
+    main{padding:24px 32px 40px;overflow:auto}.panel{display:none;min-width:1100px}.panel.active{display:block}.caption{margin:0 0 16px;font-size:15px;color:var(--muted)}
+    .diagram-group{margin:0 0 28px;padding:16px 18px 18px;background:#fff;border:1px solid #d7e3ed}.diagram-group h2{margin:0 0 4px;font-size:18px;font-weight:600}.diagram-group p{margin:0 0 12px;color:var(--muted);font-size:13px}.diagram-group svg{display:block;background:#fff;border:1px solid #d7e3ed}
+    .entity{fill:var(--blue);stroke:var(--blue-dark);stroke-width:1.5}.entity-title{fill:#fff;font-size:16px;font-weight:600;text-anchor:middle;dominant-baseline:middle}.attr{fill:var(--blue-soft);stroke:#76a7d1;stroke-width:1.2}.attr-text{fill:var(--ink);font-size:13px;text-anchor:middle;dominant-baseline:middle}.relationship{fill:var(--gold-soft);stroke:#d49b26;stroke-width:1.4}.relationship-text{fill:#6b4b05;font-size:13px;text-anchor:middle;dominant-baseline:middle}.connector{stroke:var(--line);stroke-width:1.25;fill:none}.cardinality{fill:var(--ink);font-size:12px;font-weight:600}
+    .table{fill:#fff;stroke:#76a7d1;stroke-width:1.2}.table-head{fill:var(--blue)}.table-name{fill:#fff;font-size:14px;font-weight:600}.field{fill:var(--ink);font-size:12px}.pk{fill:#a76800;font-weight:600}.fk{fill:#2f75b5;font-weight:600}.note{fill:var(--muted);font-size:12px}.edge-profile{stroke:var(--profile)}.edge-show{stroke:var(--show)}.edge-order{stroke:var(--order)}.edge-log{stroke:var(--log)}.edge-derived{stroke:var(--derived);stroke-dasharray:7 5}.edge-point{fill:#fff;stroke-width:2}.mapping-note{margin:8px 0 0;padding:9px 11px;background:#f7fafc;border-left:3px solid var(--blue);color:var(--ink);font-size:12px;line-height:1.7}.mapping-note strong{color:var(--blue-dark)}
+    .legend{display:flex;flex-wrap:wrap;gap:16px;padding:10px 0 0;color:var(--muted);font-size:13px}.legend span{display:inline-flex;align-items:center;gap:6px}.line{width:28px;border-top:3px solid;display:inline-block}.profile{border-color:var(--profile)}.show{border-color:var(--show)}.order{border-color:var(--order)}.log{border-color:var(--log)}.derived{border-color:var(--derived);border-top-style:dashed}
+  </style>
+</head>
+<body>
+  <header><h1>演出门票销售系统分域数据库模型</h1><p>概念模型和逻辑模型均按业务域拆图，跨图重复的实体只用于表达关系，不代表重复建表。</p></header>
+  <div class="toolbar"><button class="active" data-panel="concept">概念模型（Chen 表示法）</button><button data-panel="logic">逻辑模型（主外键结构）</button></div>
+  <main>
+    <section id="concept" class="panel active"><p class="caption">每张图只展示一个业务域；属性线连接椭圆边界和实体边界，关系线使用独立通道。</p>
+      <div class="diagram-group"><h2>1. 演出基础信息</h2><p>城市、场馆、类型、管理员、演出、场次和票档。</p><svg id="c1" width="1040" height="470" viewBox="0 0 1040 470" role="img" aria-label="演出基础信息概念模型"></svg></div>
+      <div class="diagram-group"><h2>2. 用户资料</h2><p>用户保存收货信息和常用购票人。</p><svg id="c2" width="1040" height="360" viewBox="0 0 1040 360" role="img" aria-label="用户资料概念模型"></svg></div>
+      <div class="diagram-group"><h2>3. 订单与购票</h2><p>订单对应场次、选择票档、使用地址，并包含订单明细。</p><svg id="c3" width="1040" height="520" viewBox="0 0 1040 520" role="img" aria-label="订单购票概念模型"></svg></div>
+      <div class="diagram-group"><h2>4. 请求与销售统计</h2><p>购票请求记录成功或失败；支付成功订单派生销售统计。</p><svg id="c4" width="1040" height="360" viewBox="0 0 1040 360" role="img" aria-label="请求统计概念模型"></svg></div>
+    </section>
+    <section id="logic" class="panel"><p class="caption">逻辑模型按同样的四个业务域拆图。线端点对齐到具体字段行，主外键对应关系列在每张图下方。</p>
+      <div class="diagram-group"><h2>1. 演出基础表</h2><svg id="l1" width="1040" height="500" viewBox="0 0 1040 500" role="img" aria-label="演出基础逻辑模型"></svg><div class="mapping-note"><strong>主外键映射：</strong> VENUE.city_id → CITY.city_id；SHOW.category_id → CATEGORY.category_id；SHOW.city_id → CITY.city_id；SHOW.admin_id → ADMIN.admin_id；SHOW_SESSION.show_id → SHOW.show_id；SHOW_SESSION.venue_id → VENUE.venue_id；TICKET_TIER.session_id → SHOW_SESSION.session_id。</div></div>
+      <div class="diagram-group"><h2>2. 用户资料表</h2><svg id="l2" width="1040" height="360" viewBox="0 0 1040 360" role="img" aria-label="用户资料逻辑模型"></svg><div class="mapping-note"><strong>主外键映射：</strong> SHIPPING_ADDRESS.user_id → APP_USER.user_id；ATTENDEE.user_id → APP_USER.user_id。</div></div>
+      <div class="diagram-group"><h2>3. 订单交易表</h2><svg id="l3" width="1040" height="540" viewBox="0 0 1040 540" role="img" aria-label="订单交易逻辑模型"></svg><div class="mapping-note"><strong>主外键映射：</strong> TICKET_ORDER.user_id → APP_USER.user_id；TICKET_ORDER.session_id → SHOW_SESSION.session_id；TICKET_ORDER.tier_id → TICKET_TIER.tier_id；TICKET_ORDER.address_id → SHIPPING_ADDRESS.address_id；ORDER_ITEM.order_id → TICKET_ORDER.order_id；ORDER_ITEM.attendee_id → ATTENDEE.attendee_id。<br><strong>一致性约束：</strong> TICKET_ORDER(session_id, tier_id) 与 TICKET_TIER(session_id, tier_id) 成对对应。</div></div>
+      <div class="diagram-group"><h2>4. 请求与统计表</h2><svg id="l4" width="1040" height="360" viewBox="0 0 1040 360" role="img" aria-label="请求统计逻辑模型"></svg><div class="mapping-note"><strong>说明：</strong> PURCHASE_REQUEST 中的 user_id、session_id、tier_id 是请求上下文记录，当前基础 DDL 未声明为外键；SALES_DAILY 是由订单汇总得到的派生表。</div><div class="legend"><span><i class="line profile"></i>用户资料</span><span><i class="line show"></i>演出信息</span><span><i class="line order"></i>订单交易</span><span><i class="line log"></i>请求日志</span><span><i class="line derived"></i>统计派生</span></div></div>
+    </section>
+  </main>
+  <script>
+    const NS='http://www.w3.org/2000/svg';
+    const el=(n,a={},v='')=>{const x=document.createElementNS(NS,n);Object.entries(a).forEach(([k,z])=>x.setAttribute(k,z));if(v)x.textContent=v;return x}; const add=(p,c)=>(p.appendChild(c),c); const txt=(p,x,y,v,c)=>add(p,el('text',{x,y,class:c},v));
+    const poly=(p,pts,c='connector')=>add(p,el('polyline',{points:pts.map(q=>q.join(',')).join(' '),class:c}));
+    const E=(s,x,y,w,h,v)=>{add(s,el('rect',{x,y,width:w,height:h,rx:2,class:'entity'}));txt(s,x+w/2,y+h/2,v,'entity-title');return{x,y,w,h}};
+    const A=(s,x,y,w,h,v)=>{add(s,el('ellipse',{cx:x+w/2,cy:y+h/2,rx:w/2,ry:h/2,class:'attr'}));txt(s,x+w/2,y+h/2,v,'attr-text');return{x,y,w,h}};
+    const D=(s,x,y,w,h,v)=>{add(s,el('polygon',{points:`${x},${y-h/2} ${x+w/2},${y} ${x},${y+h/2} ${x-w/2},${y}`,class:'relationship'}));txt(s,x,y,v,'relationship-text')}; const C=(s,x,y,v)=>txt(s,x,y,v,'cardinality');
+    const link=(s,a,b,pts,label,ca='1',cb='N')=>{poly(s,pts);C(s,pts[0][0]+4,pts[0][1]-6,ca);const q=pts[pts.length-1];C(s,q[0]-16,q[1]-6,cb);if(label)D(s,pts[Math.floor(pts.length/2)][0],pts[Math.floor(pts.length/2)][1],92,38,label)};
+    const attrLink=(s,e,a,side='top')=>{const p=side==='top'?[[e.x+e.w/2,e.y],[a.x+a.w/2,a.y+a.h]]:side==='bottom'?[[e.x+e.w/2,e.y+e.h],[a.x+a.w/2,a.y]]:side==='left'?[[e.x,e.y+e.h/2],[a.x+a.w,a.y+a.h/2]]:[[e.x+e.w,e.y+e.h/2],[a.x,a.y+a.h/2]];poly(s,p)};
+    function concept1(){const s=document.getElementById('c1');const city=E(s,70,190,140,54,'城市'),venue=E(s,340,190,140,54,'场馆'),cat=E(s,70,350,140,54,'演出类型'),show=E(s,340,350,140,54,'演出'),admin=E(s,610,350,140,54,'管理员'),ses=E(s,610,190,140,54,'演出场次'),tier=E(s,880,190,140,54,'票档');link(s,city,venue,[[210,247],[294,247],[294,217],[340,217]],'位于');link(s,city,show,[[140,274],[140,315],[300,315],[300,377],[340,377]],'举办');link(s,cat,show,[[210,377],[294,377],[294,377],[340,377]],'分类');link(s,show,ses,[[480,377],[550,377],[550,217],[610,217]],'安排');link(s,ses,tier,[[750,217],[815,217],[815,217],[880,217]],'设置');link(s,admin,show,[[610,377],[570,377],[570,450],[500,450],[500,404],[480,404]],'创建');attrLink(s,city,A(s,82,105,116,34,'城市ID'));attrLink(s,venue,A(s,352,105,116,34,'场馆名称'));attrLink(s,cat,A(s,82,265,116,34,'类型名称'));attrLink(s,show,A(s,352,425,116,34,'演出名称'),'bottom');attrLink(s,ses,A(s,622,105,116,34,'演出日期'));attrLink(s,tier,A(s,892,105,116,34,'价格/票数'));attrLink(s,admin,A(s,622,425,116,34,'管理员ID'),'bottom')}
+    function concept2(){const s=document.getElementById('c2');const u=E(s,130,155,150,54,'用户'),ad=E(s,510,90,160,54,'收货信息'),at=E(s,510,245,160,54,'常用购票人');link(s,u,ad,[[280,182],[395,182],[395,117],[510,117]],'保存');link(s,u,at,[[280,182],[395,182],[395,272],[510,272]],'维护');attrLink(s,u,A(s,147,70,116,34,'用户名'));attrLink(s,ad,A(s,532,10,116,34,'收货地址'));attrLink(s,at,A(s,532,300,116,34,'姓名/证件号'),'bottom')}
+    function concept3(){const s=document.getElementById('c3');const u=E(s,60,235,140,54,'用户'),ad=E(s,60,395,140,54,'收货信息'),ses=E(s,330,75,140,54,'演出场次'),tier=E(s,570,75,140,54,'票档'),ord=E(s,330,235,140,54,'订单'),item=E(s,800,235,160,54,'订单明细'),att=E(s,570,395,140,54,'常用购票人');link(s,u,ord,[[200,262],[264,262],[264,262],[330,262]],'提交');link(s,ad,ord,[[200,422],[250,422],[250,289],[330,289]],'使用地址');link(s,ses,ord,[[400,129],[400,180],[400,235]],'对应场次');link(s,tier,ord,[[640,129],[640,175],[450,175],[450,235]],'选择票档');link(s,ord,item,[[470,262],[635,262],[635,262],[800,262]],'包含','1','1..N');link(s,att,item,[[710,422],[760,422],[760,289],[880,289]],'持有');attrLink(s,ord,A(s,342,315,116,34,'订单金额'),'bottom');attrLink(s,item,A(s,822,315,116,34,'购票人'),'bottom')}
+    function concept4(){const s=document.getElementById('c4');const u=E(s,50,145,140,54,'用户'),ses=E(s,300,55,140,54,'演出场次'),tier=E(s,520,55,140,54,'票档'),req=E(s,300,145,160,54,'购票请求'),ord=E(s,700,145,140,54,'订单'),daily=E(s,700,275,160,54,'销售统计');link(s,u,req,[[190,172],[245,172],[245,172],[300,172]],'记录');link(s,ses,req,[[370,109],[370,125],[370,125],[380,145]],'针对');link(s,tier,req,[[590,109],[590,125],[510,125],[510,145]],'请求票档');link(s,ord,daily,[[840,172],[900,172],[900,302],[860,302]],'支付成功后汇总','1','N');attrLink(s,req,A(s,322,235,116,34,'处理结果'),'bottom');attrLink(s,daily,A(s,722,325,160,34,'销售数量/金额'),'bottom')}
+    const tables={
+      user:{name:'APP_USER 用户',fields:[['PK','user_id'],['','username'],['','password'],['','phone']]},city:{name:'CITY 城市',fields:[['PK','city_id'],['','city_name']]},cat:{name:'CATEGORY 演出类型',fields:[['PK','category_id'],['','category_name']]},admin:{name:'ADMIN 管理员',fields:[['PK','admin_id'],['','username'],['','password']]},address:{name:'SHIPPING_ADDRESS 收货信息',fields:[['PK','address_id'],['FK','user_id'],['','receiver_name'],['','phone'],['','address_detail']]},venue:{name:'VENUE 场馆',fields:[['PK','venue_id'],['FK','city_id'],['','venue_name'],['','address']]},show:{name:'SHOW 演出',fields:[['PK','show_id'],['FK','category_id'],['FK','city_id'],['FK','admin_id'],['','show_name'],['','description']]},session:{name:'SHOW_SESSION 演出场次',fields:[['PK','session_id'],['FK','show_id'],['FK','venue_id'],['','show_time'],['','sale_status']]},tier:{name:'TICKET_TIER 票档',fields:[['PK','tier_id'],['FK','session_id'],['','tier_name'],['','price'],['','total_seats']]},attendee:{name:'ATTENDEE 常用购票人',fields:[['PK','attendee_id'],['FK','user_id'],['','attendee_name'],['','id_type'],['','id_no']]},order:{name:'TICKET_ORDER 订单',fields:[['PK','order_id'],['FK','user_id'],['FK','session_id'],['FK','tier_id'],['FK','address_id'],['','ticket_count'],['','total_amount'],['','order_status']]},item:{name:'ORDER_ITEM 订单明细',fields:[['PK','item_id'],['FK','order_id'],['FK','attendee_id'],['','unit_price']]},request:{name:'PURCHASE_REQUEST 购票请求',fields:[['PK','request_id'],['','user_id'],['','session_id'],['','tier_id'],['','ticket_count'],['','result']]},daily:{name:'SALES_DAILY 销售统计',fields:[['PK','stat_date'],['','order_count'],['','ticket_count'],['','total_amount']]}
+    };
+    function T(s,x,y,t){const h=30+t.fields.length*23+8,rows={};add(s,el('rect',{x,y,width:210,height:h,class:'table'}));add(s,el('rect',{x,y,width:210,height:30,class:'table-head'}));txt(s,x+9,y+20,t.name,'table-name');t.fields.forEach((f,i)=>{const yy=y+51+i*23;rows[f[1]]=yy;txt(s,x+10,yy,f[0],f[0]==='PK'?'pk':f[0]==='FK'?'fk':'note');txt(s,x+42,yy,f[1],'field')});return{x,y,w:210,h,rows}}
+    const fieldPoint=(t,field,side)=>[side==='left'?t.x:t.x+t.w,t.rows[field]];
+    const keyEdge=(s,child,childField,parent,parentField,pts,c,labelPos,label)=>{poly(s,pts,`connector edge-${c}`);const a=pts[0],b=pts[pts.length-1];add(s,el('circle',{cx:a[0],cy:a[1],r:3,class:`edge-point edge-${c}`}));add(s,el('circle',{cx:b[0],cy:b[1],r:3,class:`edge-point edge-${c}`}))};
+    const derivedEdge=(s,pts)=>{poly(s,pts,'connector edge-derived');const a=pts[0],b=pts[pts.length-1];add(s,el('circle',{cx:a[0],cy:a[1],r:3,class:'edge-point edge-derived'}));add(s,el('circle',{cx:b[0],cy:b[1],r:3,class:'edge-point edge-derived'}))};
+    const LE=(s,a,b,pts,c)=>poly(s,pts,`connector edge-${c}`);
+    function logic1(){const s=document.getElementById('l1'),m={city:T(s,30,40,tables.city),cat:T(s,280,40,tables.cat),admin:T(s,530,40,tables.admin),venue:T(s,30,260,tables.venue),show:T(s,280,260,tables.show),ses:T(s,530,260,tables.session),tier:T(s,780,260,tables.tier)};
+      keyEdge(s,m.venue,'city_id',m.city,'city_id',[[30,334],[14,334],[14,91],[30,91]],'show',[35,210]);
+      keyEdge(s,m.show,'category_id',m.cat,'category_id',[[280,334],[264,334],[264,91],[280,91]],'show',[268,210]);
+      keyEdge(s,m.show,'city_id',m.city,'city_id',[[280,357],[252,357],[252,145],[240,145],[240,91]],'show',[145,138]);
+      keyEdge(s,m.show,'admin_id',m.admin,'admin_id',[[490,380],[510,380],[510,145],[530,145],[530,91]],'show',[520,138]);
+      keyEdge(s,m.ses,'show_id',m.show,'show_id',[[530,334],[512,334],[512,311],[490,311]],'show',[506,300]);
+      keyEdge(s,m.ses,'venue_id',m.venue,'venue_id',[[740,357],[760,357],[760,470],[240,470],[240,311]],'show',[500,485]);
+      keyEdge(s,m.tier,'session_id',m.ses,'session_id',[[780,334],[760,334],[760,311],[740,311]],'show',[758,300]);
+    }
+    function logic2(){const s=document.getElementById('l2'),m={user:T(s,80,80,tables.user),ad:T(s,420,45,tables.address),at:T(s,420,220,tables.attendee)};
+      keyEdge(s,m.ad,'user_id',m.user,'user_id',[[420,119],[350,119],[350,131],[290,131]],'profile',[352,108]);
+      keyEdge(s,m.at,'user_id',m.user,'user_id',[[420,294],[330,294],[330,154],[290,154]],'profile',[334,182]);
+    }
+    function logic3(){const s=document.getElementById('l3'),m={user:T(s,30,50,tables.user),ad:T(s,30,300,tables.address),ses:T(s,300,50,tables.session),tier:T(s,570,50,tables.tier),ord:T(s,300,300,tables.order),item:T(s,800,300,tables.item),at:T(s,560,360,tables.attendee)};
+      keyEdge(s,m.ord,'user_id',m.user,'user_id',[[300,374],[270,374],[270,124],[240,124]],'order',[248,250]);
+      keyEdge(s,m.ord,'session_id',m.ses,'session_id',[[300,397],[280,397],[280,101],[300,101]],'order',[286,260]);
+      keyEdge(s,m.ord,'tier_id',m.tier,'tier_id',[[510,420],[530,420],[530,101],[570,101]],'order',[536,250]);
+      keyEdge(s,m.ord,'address_id',m.ad,'address_id',[[300,443],[270,443],[270,351],[240,351]],'order',[246,462]);
+      keyEdge(s,m.item,'order_id',m.ord,'order_id',[[800,374],[790,374],[790,330],[510,330],[510,351]],'order',[650,320]);
+      keyEdge(s,m.item,'attendee_id',m.at,'attendee_id',[[800,397],[785,397],[785,411],[770,411]],'order',[786,385]);
+    }
+    function logic4(){const s=document.getElementById('l4'),m={user:T(s,40,55,tables.user),ses:T(s,300,55,tables.session),tier:T(s,560,55,tables.tier),req:T(s,300,230,tables.request),ord:T(s,560,230,tables.order),daily:T(s,820,230,tables.daily)};
+      keyEdge(s,m.req,'user_id',m.user,'user_id',[[300,304],[275,304],[275,106],[250,106]],'log',[284,210],'user_id（上下文） → user_id');
+      keyEdge(s,m.req,'session_id',m.ses,'session_id',[[300,327],[285,327],[285,106],[300,106]],'log',[292,230],'session_id（上下文） → session_id');
+      keyEdge(s,m.req,'tier_id',m.tier,'tier_id',[[510,350],[530,350],[530,106],[560,106]],'log',[535,230],'tier_id（上下文） → tier_id');
+      derivedEdge(s,[[770,230],[795,230],[820,230]]);
+    }
+    concept1();concept2();concept3();concept4();logic1();logic2();logic3();logic4();
+    document.querySelectorAll('button[data-panel]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('button[data-panel]').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active',x.id===b.dataset.panel))}));
+  </script>
+</body>
+</html>

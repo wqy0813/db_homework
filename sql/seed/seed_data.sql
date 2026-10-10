@@ -1,7 +1,7 @@
 -- ============================================================================
 -- 演出门票销售系统 测试数据脚本 (MySQL 8.0)
 -- 执行顺序：先 ddl.sql 建库，再运行本脚本。
--- 内容：字典补充 / 场馆 / 管理员 / 演出 / 图片 / 场次 / 票档 /
+-- 内容：字典补充 / 场馆 / 管理员 / 演出 / 巡演系列 / 图片 / 场次 / 票档 /
 --       用户 / 收货信息 / 购票人 / 订单 / 明细 / 购票请求 / 汇总刷新 /
 --       售票状态自动推进事件 / （可选）10 万用户批量生成。
 -- 口令说明：password_hash 为 bcrypt 占位串，纯 SQL 测试无需校验；
@@ -20,6 +20,7 @@ TRUNCATE TABLE ticket_tier;
 TRUNCATE TABLE show_session;
 TRUNCATE TABLE show_image;
 TRUNCATE TABLE show_item;
+TRUNCATE TABLE show_series;
 TRUNCATE TABLE venue;
 TRUNCATE TABLE app_user;
 TRUNCATE TABLE admin;
@@ -66,32 +67,52 @@ INSERT INTO venue (venue_id, city_id, venue_name, address, capacity) VALUES
 -- 四、演出（8 个，覆盖 5+ 种类型、多个城市）
 -- ----------------------------------------------------------------------------
 INSERT INTO show_item (show_id, show_name, category_id, city_id, poster_url, description, admin_id) VALUES
-  (1,'周杰伦《嘉年华》世界巡回演唱会', 1, 1,'/static/img/concert1.jpg',
+  (1,'周杰伦《嘉年华》世界巡回演唱会', 1, 1,'/posters/D/series_069_poster.jpg',
    '周杰伦《嘉年华》世界巡回演唱会，经典曲目全新编排，豪华舞美呈现，带你重温青春记忆。',1),
-  (2,'张学友《60+》巡回演唱会',        1, 2,'/static/img/concert2.jpg',
+  (2,'张学友《60+》巡回演唱会',        1, 2,'/posters/C/series_072_poster.jpg',
    '歌神张学友 60+ 巡演，一连两晚，数十首经典金曲，现场交响乐团编制。',1),
-  (3,'话剧《雷雨》',                   2, 1,'/static/img/theater1.jpg',
+  (3,'话剧《雷雨》',                   2, 1,'/posters/A/series_003_poster.jpg',
    '曹禺经典话剧《雷雨》，北京人民艺术剧院班底演出，两个场景、一天之内、三十年恩怨。',1),
-  (4,'CBA 常规赛：广东宏远 vs 辽宁本钢',3, 3,'/static/img/basket1.jpg',
+  (4,'CBA 常规赛：广东宏远 vs 辽宁本钢',3, 3,'/posters/B/series_004_poster.jpg',
    'CBA 常规赛焦点战，华南虎对阵东北虎，强强对话一票难求。',1),
-  (6,'莫奈《光影》沉浸式艺术展',       5, 2,'/static/img/museum1.jpg',
+  (6,'莫奈《光影》沉浸式艺术展',       5, 2,'/posters/C/series_006_poster.jpg',
    '莫奈《光影》沉浸式数字艺术展，3000 平米投影空间，重现睡莲与日出印象。',1),
-  (7,'郎朗钢琴独奏音乐会',             6, 5,'/static/img/piano1.jpg',
+  (7,'郎朗钢琴独奏音乐会',             6, 5,'/posters/D/series_007_poster.jpg',
    '国际钢琴大师郎朗独奏音乐会，曲目涵盖巴赫、肖邦、拉威尔与中国作品。',1),
-  (8,'舞剧《只此青绿》',               7, 6,'/static/img/dance1.jpg',
+  (8,'舞剧《只此青绿》',               7, 6,'/posters/A/series_008_poster.jpg',
    '现象级舞剧《只此青绿》，以《千里江山图》为灵感，东方美学巅峰之作。',1);
 
 -- ----------------------------------------------------------------------------
--- 五、演出介绍图片（每场 2-3 张）
+-- 五、巡演/IP（基础 seed 的一部分；新库只需运行本文件即可展示系列首页）
+-- ----------------------------------------------------------------------------
+INSERT INTO show_series (series_id, series_name, category_id, main_artist, poster_url, description) VALUES
+  (1, '周杰伦《嘉年华》世界巡回演唱会', 1, '周杰伦', '/posters/D/series_069_poster.jpg', '周杰伦《嘉年华》世界巡回演唱会，经典曲目全新编排，豪华舞美呈现。'),
+  (2, '张学友《60+》巡回演唱会',        1, '张学友', '/posters/C/series_072_poster.jpg', '歌神张学友 60+ 巡演，数十首经典金曲，现场交响乐团编制。'),
+  (3, '话剧《雷雨》',                   2, '北京人艺', '/posters/A/series_003_poster.jpg', '曹禺经典话剧《雷雨》，北京人民艺术剧院班底演出。'),
+  (4, 'CBA 常规赛',                     3, 'CBA联赛', '/posters/B/series_004_poster.jpg', 'CBA 常规赛焦点对决，强强对话一票难求。'),
+  (6, '莫奈《光影》沉浸式艺术展',       5, '莫奈', '/posters/C/series_006_poster.jpg', '莫奈《光影》沉浸式数字艺术展，重现睡莲与日出印象。'),
+  (7, '郎朗钢琴独奏音乐会',             6, '郎朗', '/posters/D/series_007_poster.jpg', '国际钢琴大师郎朗独奏音乐会。'),
+  (8, '舞剧《只此青绿》',               7, '中国东方演艺集团', '/posters/A/series_008_poster.jpg', '现象级舞剧《只此青绿》，以《千里江山图》为灵感。');
+
+UPDATE show_item SET series_id = 1 WHERE show_id = 1;
+UPDATE show_item SET series_id = 2 WHERE show_id = 2;
+UPDATE show_item SET series_id = 3 WHERE show_id = 3;
+UPDATE show_item SET series_id = 4 WHERE show_id = 4;
+UPDATE show_item SET series_id = 6 WHERE show_id = 6;
+UPDATE show_item SET series_id = 7 WHERE show_id = 7;
+UPDATE show_item SET series_id = 8 WHERE show_id = 8;
+
+-- ----------------------------------------------------------------------------
+-- 六、演出介绍图片（与巡演主海报使用同一已收集图片）
 -- ----------------------------------------------------------------------------
 INSERT INTO show_image (show_id, image_url, sort_no) VALUES
-  (1,'/static/img/concert1.jpg',1),(1,'/static/img/concert2.jpg',2),(1,'/static/img/concert3.jpg',3),
-  (2,'/static/img/concert2.jpg',1),(2,'/static/img/concert3.jpg',2),
-  (3,'/static/img/theater1.jpg',1),(3,'/static/img/theater2.jpg',2),
-  (4,'/static/img/basket1.jpg',1),(4,'/static/img/basket2.jpg',2),
-  (6,'/static/img/museum1.jpg',1),(6,'/static/img/theater2.jpg',2),
-  (7,'/static/img/piano1.jpg',1),(7,'/static/img/piano2.jpg',2),
-  (8,'/static/img/dance1.jpg',1),(8,'/static/img/dance2.jpg',2);
+  (1,'/posters/D/series_069_poster.jpg',1),
+  (2,'/posters/C/series_072_poster.jpg',1),
+  (3,'/posters/A/series_003_poster.jpg',1),
+  (4,'/posters/B/series_004_poster.jpg',1),
+  (6,'/posters/C/series_006_poster.jpg',1),
+  (7,'/posters/D/series_007_poster.jpg',1),
+  (8,'/posters/A/series_008_poster.jpg',1);
 
 -- ----------------------------------------------------------------------------
 -- 六、演出场次（开售时间统一早于开演时间 30 天）

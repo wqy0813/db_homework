@@ -3,6 +3,7 @@
 from flask import Blueprint, request
 
 from db import q
+from posters import resolve_poster
 from .helpers import ok
 
 shows_bp = Blueprint('api_shows', __name__)
@@ -19,6 +20,14 @@ def _row(r):
         else:
             out[k] = v
     return out
+
+
+def _poster_row(row):
+    row = dict(row)
+    row['poster_url'] = resolve_poster(
+        row.get('series_name') or row.get('show_name'), row.get('category_id'),
+        row.get('poster_url'), row.get('main_artist'))
+    return _row(row)
 
 
 @shows_bp.route('/dicts')
@@ -45,14 +54,15 @@ def shows():
     if keyword:
         sql += " AND show_name LIKE %s"; args.append('%%%s%%' % keyword)
     sql += " ORDER BY show_id DESC"
-    rows = [_row(r) for r in q(sql, args)]
+    rows = [_poster_row(r) for r in q(sql, args)]
     return ok({'list': rows, 'total': len(rows)})
 
 
 @shows_bp.route('/shows/<int:show_id>')
 def show_detail(show_id):
     show = q("""SELECT s.*, c.city_name, cat.category_name,
-                      ser.poster_url AS series_poster_url
+                      ser.poster_url AS series_poster_url,
+                      ser.series_name, ser.main_artist
                 FROM show_item s
                 JOIN city c ON c.city_id=s.city_id
                 JOIN category cat ON cat.category_id=s.category_id
@@ -60,8 +70,14 @@ def show_detail(show_id):
                 WHERE s.show_id=%s""", (show_id,), one=True)
     if not show:
         return ok({'show': None, 'sessions': [], 'images': [], 'tiers': {}})
-    if show.get('series_poster_url'):
-        show['poster_url'] = show['series_poster_url']
+    show['poster_url'] = resolve_poster(
+        show.get('series_name') or show['show_name'], show['category_id'],
+        show.get('poster_url'), show.get('main_artist'))
+    if show.get('series_poster_url') and not (show['poster_url'] or '').startswith(
+            ('/posters/', '/static/img/uploads/', 'http://', 'https://')):
+        show['poster_url'] = resolve_poster(
+            show['series_name'], show['category_id'], show['series_poster_url'],
+            show.get('main_artist'))
     show.pop('series_poster_url', None)
     pr = q("SELECT min_price,max_price,show_status,show_dates FROM v_show_list WHERE show_id=%s",
            (show_id,), one=True) or {}
@@ -137,7 +153,7 @@ def series_list():
         sql += " HAVING status=%s"; args.append(status)
     sql += " ORDER BY create_time DESC"
 
-    rows = [_row(r) for r in q(sql, args)]
+    rows = [_poster_row(r) for r in q(sql, args)]
     return ok({'list': rows, 'total': len(rows)})
 
 
@@ -173,5 +189,5 @@ def series_detail(series_id):
         GROUP BY sh.show_id, sh.city_id, c.city_name
         ORDER BY c.city_id""", (series_id,))
     # 站的总价格区间（取该巡演各站 min/max 的全局区间）
-    data = {'series': _row(ser), 'stations': [_row(s) for s in stations]}
+    data = {'series': _poster_row(ser), 'stations': [_row(s) for s in stations]}
     return ok(data)

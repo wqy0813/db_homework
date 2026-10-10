@@ -9,6 +9,7 @@ from flask import Blueprint, current_app, request
 from werkzeug.utils import secure_filename
 
 from db import q, execute
+from posters import resolve_poster
 from .helpers import ok, fail, require_login, current_user
 
 admin_bp = Blueprint('api_admin', __name__)
@@ -42,6 +43,9 @@ def admin_shows():
 
 def _s(r):
     out = dict(r)
+    if 'show_name' in out:
+        out['poster_url'] = resolve_poster(
+            out['show_name'], out.get('category_id'), out.get('poster_url'))
     for k, v in list(out.items()):
         if hasattr(v, 'isoformat'):
             out[k] = v.isoformat(sep=' ')

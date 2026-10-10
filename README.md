@@ -75,7 +75,7 @@ db_homework/
 │  │  ├─ admin.py            # 管理员演出、场次和票档管理
 │  │  └─ stats.py            # 管理员销售统计
 │  ├─ static_web/            # 已构建的 Vue 前端，Flask 从 /app/ 托管
-│  ├─ static/                # 新版仍使用的海报、艺人图片等媒体资源
+│  ├─ static/                # Flask 静态目录（如管理员上传内容）
 │  └─ requirements.txt
 ├─ frontend/
 │  ├─ src/                   # Vue 源码、路由、状态和页面
@@ -85,15 +85,15 @@ db_homework/
 │  └─ vite.config.js         # /app/ base 和 /api 代理
 ├─ sql/
 │  ├─ schema/                # ddl.sql、views.sql：表、约束、视图和触发器
-│  ├─ seed/                  # seed_data.sql、phase4_seed_series.sql：基础/示例数据
-│  ├─ migrations/            # phase4_series.sql：结构升级脚本
+│  ├─ seed/                  # seed_data.sql：完整基础演示数据
+│  ├─ archive/               # 历史阶段迁移和补充种子脚本
 │  ├─ tests/                 # queries.sql、test_cases.sql：查询示例和数据库测试
 │  └─ backups/               # 大型数据库备份，不参与初始化
 ├─ scripts/
 │  ├─ data/                  # 数据生成、清洗、巡演聚合和媒体维护
 │  ├─ tests/                 # API、数据一致性和状态分布测试
 │  ├─ performance/           # 查询性能和 EXPLAIN 检查
-│  └─ docs/                  # 课程设计文档生成辅助脚本
+│  └─ archive/               # 一次性探查和旧素材工具
 ├─ test_tools/
 │  ├─ ui_test.js             # Puppeteer UI 测试
 │  ├─ shots/                 # UI 测试截图
@@ -182,7 +182,7 @@ SELECT COUNT(*) FROM ticket_sales.ticket_order;
 
 当前仓库中的数据库可能已经由数据生成脚本扩充，数量不一定等于基础 seed 数据的数量。`sql/schema/views.sql` 通常不需要单独执行，因为 `ddl.sql` 已包含 3 个业务视图；如果视图被删除或需要单独重建，再执行该文件。
 
-升级已有数据库的场次状态时，先执行 `sql/migrations/phase5_session_status.sql`，再执行 `sql/schema/views.sql` 刷新演出列表视图，最后运行 `python scripts/data/rebalance_status.py` 重算售票中/预售中状态。迁移会统一调整开售时间，并把已开演场次标记为“已结束”；不会删除业务数据。
+需要升级旧数据库时，先确认其当前结构版本，再参考 `sql/archive/` 中对应的迁移脚本；不要把归档迁移脚本用于新库。phase 5 场次状态迁移会调整开售时间并更新已开演场次状态。新数据库只需执行上面的 DDL 和完整 seed。
 
 ### 数据库连接配置
 
@@ -240,25 +240,21 @@ http://localhost:5173/app/
 
 ```powershell
 npm run dev      # Vite 开发服务器
-npm run build    # 构建到 frontend/dist
+npm run build    # 更新 ../backend/static_web
 npm run preview  # 本地预览构建产物
 ```
 
 ## 生产构建和部署
 
-当前仓库已经包含一份 `backend/static_web/` 构建产物。修改前端源码后，需要重新构建并同步产物：
+修改前端源码后，直接将新构建覆盖到 Flask 托管目录；Vite 会先清空旧 hash 资源，避免历史构建累积：
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run build
 ```
 
-然后将 `frontend/dist/` 下的文件复制到 `backend/static_web/`，保留 `assets/` 子目录。例如 PowerShell：
-
-```powershell
-Copy-Item -Recurse -Force .\dist\* ..\backend\static_web\
-```
+Vite 会先清理旧构建并将产物直接写入 `backend/static_web/`，无需手动复制。
 
 重新启动 Flask 后访问：
 
@@ -322,9 +318,9 @@ http://127.0.0.1:5000/app/
 | `sql/schema/views.sql` | 独立创建业务视图 | 仅修改视图 |
 | `sql/tests/queries.sql` | 常用查询、购票事务和统计 SQL 示例 | 视语句而定，默认不建议直接全量执行 |
 | `sql/tests/test_cases.sql` | 约束、触发器、购票和统计测试 | 含写入、失败用例和清理语句，执行前阅读 |
-| `sql/migrations/phase4_series.sql` | 巡演/IP 结构升级 | 取决于脚本内容，执行前备份 |
-| `sql/migrations/phase5_session_status.sql` | 区分已结束与售罄，并将所有开售时间统一为开演前 30 天 | 会更新场次状态和开售时间，不删除数据 |
-| `sql/seed/phase4_seed_series.sql` | 巡演/IP 示例数据 | 会写入巡演相关数据 |
+| `sql/archive/phase4_series.sql` | 旧 schema 的巡演/IP 结构升级 | 仅用于对应旧库 |
+| `sql/archive/phase5_session_status.sql` | 旧库场次状态升级 | 会更新场次状态和开售时间 |
+| `sql/archive/phase4_seed_series.sql` | 历史单独导入系列数据的脚本；内容已合并进当前 `seed_data.sql` | 仅用于追溯，不要在新库重复执行 |
 
 数据库当前包含城市、类型、管理员、用户、场馆、巡演、演出、图片、场次、票档、收货信息、购票人、订单、订单明细、购票请求和销售日汇总等表；具体字段和外键以 `sql/schema/ddl.sql` 为准。
 
@@ -388,6 +384,22 @@ node ui_test.js
 
 ## 常见问题
 
+### 每次启动会重新生成数据吗？
+
+不会。`start_website.bat` 只检查/启动 MySQL、检查数据库是否存在并启动 Flask；
+`python backend/app.py` 和 `npm run dev` 也不会导入种子或运行数据生成脚本。
+只有主动执行建库、种子导入或 `gen_more_data.py`、`gen_full_scale.py` 等脚本才会重建相关数据。
+生成脚本不等同于启动脚本，重新生成后的数据也不会自动带回已整理的巡演/城市站关系。
+日常演示直接启动网站，保留现有数据库即可。
+
+### 海报收集目录与数据库重新导入
+
+演出列表、巡演详情和城市站详情按 `poster_collect/A~D/sources.csv` 中的演出名称匹配海报，
+通过 `/posters/<分组>/<文件名>` 直接读取收集的原图。文件名中的编号是收集时的编号，
+不要求与重新导入后的数据库 ID 一致，也无需手动复制到 `backend/static/img/posters/`。
+管理员上传的海报和填写的外部 URL 优先保留。修改来源清单后重启 Flask 以重新读取映射。
+Vite 开发模式的 `/posters` 请求会代理到 Flask。
+
 ### 浏览器提示无法连接 `127.0.0.1:5000`
 
 确认 Flask 终端仍在运行，并检查端口：
@@ -401,7 +413,7 @@ Get-NetTCPConnection -LocalPort 5000 -State Listen
 ### 页面打开但空白或资源 404
 
 - 生产模式检查 `backend/static_web/index.html` 和 `backend/static_web/assets/` 是否完整。
-- 修改前端后重新运行 `npm run build`，再将 `frontend/dist/` 内容复制到 `backend/static_web/`。
+- 修改前端后运行 `npm run build`；构建会直接替换 `backend/static_web/`。
 - 不要把生产 `/app/` 地址和 Vite 开发地址混用。
 
 ### API 返回 `401` 或页面提示请先登录
@@ -427,16 +439,15 @@ Get-NetTCPConnection -LocalPort 5000 -State Listen
 - 一键启动脚本仍以 Windows 本地演示为目标；如果 MySQL 需要密码，请通过环境变量设置 `DB_PASSWORD`。跨平台运行请使用命令行方式。
 - 前端当前使用 Hash 路由，页面链接形如 `/app/#/shows`。
 - 旧版 Jinja2 模板和旧版 Flask 页面已从当前工作目录移除；`backend/app.py` 只注册 REST API 和 Vue 静态托管路由。
-- `backend/static_web/` 是构建产物，不会随 `npm run build` 自动同步到后端目录。
+- `backend/static_web/` 是构建产物；Vite 的 `npm run build` 会直接生成到该目录。
 
 ## 相关文档
 
 - [API 接口说明](docs/API接口说明.md)
 - [组员部署使用手册](docs/组员部署使用手册.md)
-- [系统功能测试手册](docs/系统功能测试手册.md)
-- [新版功能测试说明书（实测填写版）](docs/新版功能测试说明书_实测填写版.md)
-- [功能测试执行报告](docs/功能测试执行报告.md)
-- [数据库设计](docs/演出门票销售系统_数据库设计.md)
+- [数据库设计正文](docs/演出门票销售系统_数据库设计对应内容.md)
+- [数据库模型](docs/database_models.md)
+- [文件用途与冗余盘点](docs/项目文件用途与冗余盘点.md)
 - [前端说明](frontend/README.md)
 
 ## 来源与核对日期

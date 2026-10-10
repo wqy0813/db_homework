@@ -1,6 +1,6 @@
-# 后端 REST API 接口说明（第 2 期）
+# 后端 REST API 接口说明
 
-Flask 后端在保留原页面路由的同时，新增一组 `/api/*` JSON 接口，供 Vue 前端调用。
+Flask 后端提供 `/api/*` JSON 接口供 Vue 前端调用；页面由 Vue 单页应用托管，根路径 `/` 重定向到 `/app/`。
 - 基础地址：`http://127.0.0.1:5000/api`
 - 统一返回：`{ "code": 0, "msg": "ok", "data": {...} }`；`code=0` 成功，`code=401/403` 未登录/无权限，其他为业务失败（错误信息在 `msg`）。
 - 登录态：用 Cookie Session（登录后自动带 `session` cookie）；前后端分离开发时 axios 需设 `withCredentials: true`。
@@ -19,8 +19,12 @@ Flask 后端在保留原页面路由的同时，新增一组 `/api/*` JSON 接�
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/dicts` | 城市、类型字典 |
-| GET | `/api/shows?city_id=&category_id=&keyword=` | 演出列表（含票价区间、show_dates 多场次日期、状态） |
+| GET | `/api/series?city_id=&category_id=&status=&keyword=` | 巡演/系列列表及筛选 |
+| GET | `/api/series/<id>` | 巡演详情和所属城市站 |
+| GET | `/api/shows?city_id=&category_id=&status=&keyword=` | 演出列表（含票价区间、多场次日期和状态） |
 | GET | `/api/shows/<id>` | 演出详情：show/summary/images/sessions/tiers（按场次分组） |
+
+收集海报通过 `/posters/<组别>/<文件名>` 提供，`poster_url` 字段直接返回该地址。管理员上传和外部海报 URL 继续按原地址返回。
 
 ## 用户（需 role=user）
 
@@ -56,7 +60,7 @@ Flask 后端在保留原页面路由的同时，新增一组 `/api/*` JSON 接�
 | POST | `/api/admin/tier/<id>/delete` | 删票档（有订单则拒绝） |
 | GET | `/api/admin/stats?start=YYYY-MM-DD&end=YYYY-MM-DD` | 统计：daily 折线 / cats 饼图 / cities 柱图 / top TOP10 / total 指标 |
 
-## 购票事务逻辑（与旧页面一致）
+## 购票事务逻辑
 
 `/api/buy` 在单个数据库事务内完成：购票请求留痕 → 场次状态校验（预售/售罄拦截）→ 地址/购票人归属校验 →
 每人每场次限购 1 张（应用层 + `UNIQUE(attendee_id,session_id)` 数据库唯一约束双保险）→

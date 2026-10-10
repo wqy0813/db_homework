@@ -25,6 +25,8 @@ app.config.update(
 # 注册 REST API 蓝图（新版前端全部走 /api）
 from api import register_apis
 register_apis(app)
+from posters import posters_bp
+app.register_blueprint(posters_bp)
 
 
 def _allowed_origin(origin):
