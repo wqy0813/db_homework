@@ -17,8 +17,8 @@
     </el-card>
 
     <h3 class="section-title">城市站（点击进入该站选座购票）</h3>
-    <el-card v-for="st in data.stations" :key="st.show_id" shadow="hover" class="station"
-             @click="$router.push('/shows/'+st.show_id)" style="cursor:pointer">
+  <el-card v-for="st in data.stations" :key="st.show_id" shadow="hover" class="station"
+             @click="openStation(st.show_id)" style="cursor:pointer">
       <div class="station-row">
         <div class="station-city">
           <b>📍 {{ st.city_name }}</b>
@@ -29,7 +29,7 @@
           <span class="muted" v-if="st.show_dates">🗓 {{ st.show_dates }}</span>
           <span class="price-small" v-if="st.min_price">¥{{ Math.round(st.min_price) }}-{{ Math.round(st.max_price) }}</span>
         </div>
-        <el-button size="small" type="danger" plain @click.stop="$router.push('/shows/'+st.show_id)">查看场次/购票 →</el-button>
+        <el-button size="small" type="danger" plain @click.stop="openStation(st.show_id)">查看场次/购票 →</el-button>
       </div>
     </el-card>
     <el-empty v-if="!loading && data.stations.length===0" description="该巡演暂无城市站" />
@@ -38,7 +38,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 
 // 巡演状态短标签（映射系统 show_status 1/2/3/4）
@@ -46,13 +46,23 @@ const STATUS_SHORT = { 1: '预售', 2: '在售', 3: '已售罄', 4: '已结束' 
 const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 
 const route = useRoute()
+const router = useRouter()
 const loading = ref(false)
 const data = ref({ series: null, stations: [] })
+
+function openStation(showId) {
+  const query = route.query.name
+    ? { from_group: route.query.name }
+    : { from_series: String(route.params.id) }
+  router.push({ path: `/shows/${showId}`, query })
+}
 
 async function load() {
   loading.value = true
   try {
-    const r = await api.get('/series/' + route.params.id)
+    const r = route.query.name
+      ? await api.get('/series/group', { params: { name: route.query.name } })
+      : await api.get('/series/' + route.params.id)
     data.value = r.data
   } finally { loading.value = false }
 }

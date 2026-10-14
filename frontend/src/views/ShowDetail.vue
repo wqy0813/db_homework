@@ -1,5 +1,5 @@
 <template>
-  <el-button link @click="$router.push('/series')">← 返回巡演列表</el-button>
+  <el-button link @click="$router.push(backPath)">← {{ fromSeries ? '返回站点列表' : '返回演出巡演' }}</el-button>
   <div v-if="data.show" v-loading="loading">
     <el-card shadow="never" class="head">
       <div class="head-inner">
@@ -100,13 +100,17 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import { useStore, STATUS_NAMES, ID_TYPE } from '../store'
 
 const route = useRoute()
+const fromSeries = computed(() => Boolean(route.query.from_series || route.query.from_group))
+const backPath = computed(() => route.query.from_group
+  ? { path: '/series/group', query: { name: route.query.from_group } }
+  : route.query.from_series ? `/series/${route.query.from_series}` : '/series')
 const store = useStore()
 const data = ref({ show: null, sessions: [], images: [], tiers: {}, summary: {} })
 const loading = ref(false)
