@@ -3,19 +3,75 @@
 import os
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 import pymysql
 from flask import Blueprint, current_app, request
 from werkzeug.utils import secure_filename
 
-from db import q, execute
+from db import q, execute, get_conn
 from posters import resolve_poster
-from .helpers import ok, fail, require_login, current_user
+from .helpers import HIDDEN_CATEGORY_ID, ok, fail, require_login, current_user
+from .session_status import refresh_sale_statuses
 
 admin_bp = Blueprint('api_admin', __name__)
 
 _POSTER_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 _POSTER_MIMETYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+
+
+def _parse_show_time(value):
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or '').strip().replace('T', ' ')
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
+
+
+def _parse_positive_price(value):
+    try:
+        price = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not price.is_finite() or price <= 0 or price > Decimal('999999.99'):
+        return None
+    try:
+        return price.quantize(Decimal('0.01'))
+    except InvalidOperation:
+        return None
+
+
+def _parse_positive_seats(value):
+    try:
+        seats = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if isinstance(value, float) and value != seats:
+        return None
+    if isinstance(value, str) and value.strip() != str(seats):
+        return None
+    return seats if seats > 0 else None
+
+
+def _sale_start_for(show_time, now):
+    scheduled = show_time - timedelta(days=30)
+    if scheduled < now:
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return scheduled
+
+
+def _sale_status_for(show_time, sale_start, tiers, now):
+    if show_time <= now:
+        return 4
+    if tiers and all(int(t['sold_seats']) >= int(t['total_seats']) for t in tiers):
+        return 3
+    return 2 if sale_start <= now else 1
 
 
 def _has_image_signature(image, ext):
@@ -35,9 +91,31 @@ def _has_image_signature(image, ext):
 @admin_bp.route('/admin/shows')
 @require_login(role='admin')
 def admin_shows():
-    rows = q("SELECT * FROM v_show_list ORDER BY show_id DESC")
+    refresh_sale_statuses()
+    conditions = []
+    params = [HIDDEN_CATEGORY_ID]
+    keyword = (request.args.get('keyword') or '').strip()
+    category_id = request.args.get('category_id')
+    city_id = request.args.get('city_id')
+    show_status = request.args.get('show_status')
+    if keyword:
+        conditions.append("show_name LIKE %s")
+        params.append('%' + keyword + '%')
+    for value, column in ((category_id, 'category_id'), (city_id, 'city_id'),
+                          (show_status, 'show_status')):
+        if value:
+            try:
+                conditions.append(column + "=%s")
+                params.append(int(value))
+            except (TypeError, ValueError):
+                return fail('筛选条件不正确')
+    where = ' WHERE category_id<>%s'
+    if conditions:
+        where += ' AND ' + ' AND '.join(conditions)
+    rows = q("SELECT * FROM v_show_list" + where + " ORDER BY show_id DESC", params)
     cities = q("SELECT * FROM city ORDER BY city_id")
-    cats = q("SELECT * FROM category ORDER BY category_id")
+    cats = q("SELECT * FROM category WHERE category_id<>%s ORDER BY category_id",
+             (HIDDEN_CATEGORY_ID,))
     return ok({'list': [_s(r) for r in rows], 'cities': cities, 'categories': cats})
 
 
@@ -59,9 +137,12 @@ def _s(r):
 def create_show():
     b = request.get_json(silent=True) or request.form
     try:
+        category_id = int(b.get('category_id'))
+        if category_id == HIDDEN_CATEGORY_ID:
+            return fail('该演出类型已停用')
         sid = execute("""INSERT INTO show_item(show_name,category_id,city_id,poster_url,description,admin_id)
                          VALUES(%s,%s,%s,%s,%s,%s)""",
-                      (b.get('show_name'), int(b.get('category_id')), int(b.get('city_id')),
+                      (b.get('show_name'), category_id, int(b.get('city_id')),
                        b.get('poster_url') or '', b.get('description') or '', current_user()['id']))
         return ok({'show_id': sid}, msg='演出已创建')
     except Exception as e:
@@ -71,31 +152,32 @@ def create_show():
 @admin_bp.route('/admin/shows/<int:show_id>')
 @require_login(role='admin')
 def show_detail(show_id):
+    refresh_sale_statuses(show_id)
     show = q("""SELECT s.*, c.city_name, cat.category_name
                 FROM show_item s
                 JOIN city c ON c.city_id=s.city_id
                 JOIN category cat ON cat.category_id=s.category_id
-                WHERE s.show_id=%s""", (show_id,), one=True)
+                WHERE s.show_id=%s AND s.category_id<>%s""", (show_id, HIDDEN_CATEGORY_ID), one=True)
     if not show:
         return fail('演出不存在')
     sessions = q("""SELECT se.session_id, se.show_id, se.venue_id,
                            se.show_time, se.sale_start,
                            se.sale_status,
-                           v.venue_name
+                           v.venue_name, v.capacity,
+                           COALESCE((SELECT SUM(t.total_seats) FROM ticket_tier t
+                                     WHERE t.session_id=se.session_id), 0) AS assigned_seats
                     FROM show_session se
                     JOIN venue v ON v.venue_id=se.venue_id
                     WHERE se.show_id=%s ORDER BY se.show_time""", (show_id,))
     tiers = q("""SELECT t.*, t.total_seats-t.sold_seats AS remain FROM ticket_tier t
                  WHERE t.session_id IN (SELECT session_id FROM show_session WHERE show_id=%s)
                  ORDER BY t.session_id, t.price DESC""", (show_id,))
-    images = q("SELECT * FROM show_image WHERE show_id=%s ORDER BY sort_no,image_id", (show_id,))
     venues = q("SELECT * FROM venue WHERE city_id=%s ORDER BY venue_id", (show['city_id'],))
     tbs = {}
     for t in tiers:
         t['price'] = float(t['price'])
         tbs.setdefault(t['session_id'], []).append(t)
-    return ok({'show': _s(show), 'images': [_s(x) for x in images],
-               'sessions': [_s(x) for x in sessions],
+    return ok({'show': _s(show), 'sessions': [_s(x) for x in sessions],
                'tiers': tbs, 'venues': [_s(x) for x in venues]})
 
 
@@ -104,6 +186,9 @@ def show_detail(show_id):
 def update_show(show_id):
     b = request.get_json(silent=True) or request.form
     try:
+        category_id = int(b.get('category_id'))
+        if category_id == HIDDEN_CATEGORY_ID:
+            return fail('该演出类型已停用')
         target_city = int(b.get('city_id'))
         show = q("SELECT city_id FROM show_item WHERE show_id=%s", (show_id,), one=True)
         if not show:
@@ -115,7 +200,7 @@ def update_show(show_id):
                 return fail('该演出已有场次，不能直接更换城市；请先处理场次')
         execute("""UPDATE show_item SET show_name=%s,category_id=%s,city_id=%s,poster_url=%s,description=%s
                    WHERE show_id=%s""",
-                (b.get('show_name'), int(b.get('category_id')), target_city,
+                (b.get('show_name'), category_id, target_city,
                  b.get('poster_url') or '', b.get('description') or '', show_id))
         return ok(msg='演出信息已更新')
     except (TypeError, ValueError):
@@ -157,55 +242,23 @@ def upload_poster():
     return ok({'url': f'/static/img/uploads/{filename}'}, msg='海报上传成功')
 
 
-@admin_bp.route('/admin/shows/<int:show_id>/images/add', methods=['POST'])
-@require_login(role='admin')
-def add_show_image(show_id):
-    b = request.get_json(silent=True) or request.form
-    image_url = (b.get('image_url') or '').strip()
-    try:
-        sort_no = int(b.get('sort_no') or 0)
-    except (TypeError, ValueError):
-        return fail('图片顺序必须是整数')
-    if not q("SELECT 1 FROM show_item WHERE show_id=%s", (show_id,), one=True):
-        return fail('演出不存在')
-    if not image_url or len(image_url) > 255:
-        return fail('图片地址不能为空且不能超过 255 个字符')
-    if sort_no < 0 or sort_no > 127:
-        return fail('图片顺序必须在 0-127 之间')
-    try:
-        iid = execute("INSERT INTO show_image(show_id,image_url,sort_no) VALUES(%s,%s,%s)",
-                      (show_id, image_url, sort_no))
-        return ok({'image_id': iid}, msg='图片已添加')
-    except Exception as e:
-        return fail('图片添加失败：%s' % e)
-
-
-@admin_bp.route('/admin/shows/<int:show_id>/images/<int:image_id>/delete', methods=['POST'])
-@require_login(role='admin')
-def delete_show_image(show_id, image_id):
-    try:
-        if not q("SELECT 1 FROM show_image WHERE image_id=%s AND show_id=%s", (image_id, show_id), one=True):
-            return fail('图片不存在或不属于当前演出')
-        execute("DELETE FROM show_image WHERE image_id=%s AND show_id=%s", (image_id, show_id))
-        return ok(msg='图片已删除')
-    except Exception as e:
-        return fail('图片删除失败：%s' % e)
-
-
 @admin_bp.route('/admin/session/create', methods=['POST'])
 @require_login(role='admin')
 def create_session():
     b = request.get_json(silent=True) or request.form
-    show_id = int(b.get('show_id'))
-    show_time = (b.get('show_time') or '').replace('T', ' ')
     try:
-        try:
-            parsed_show_time = datetime.strptime(show_time, '%Y-%m-%d %H:%M:%S')
-        except ValueError:
-            parsed_show_time = datetime.strptime(show_time, '%Y-%m-%d %H:%M')
-        sale_start = parsed_show_time - timedelta(days=30)
+        show_id = int(b.get('show_id'))
+        venue_id = int(b.get('venue_id'))
+        parsed_show_time = _parse_show_time(b.get('show_time'))
+        if not parsed_show_time:
+            return fail('场次添加失败：开演时间格式不正确')
+        now = datetime.now()
+        if parsed_show_time <= now:
+            return fail('场次添加失败：开演时间必须晚于当前时间')
+        sale_start = _sale_start_for(parsed_show_time, now)
+        sale_status = _sale_status_for(parsed_show_time, sale_start, [], now)
         show = q("SELECT city_id FROM show_item WHERE show_id=%s", (show_id,), one=True)
-        venue = q("SELECT city_id FROM venue WHERE venue_id=%s", (int(b.get('venue_id')),), one=True)
+        venue = q("SELECT city_id FROM venue WHERE venue_id=%s", (venue_id,), one=True)
         if not show:
             return fail('场次添加失败：演出不存在')
         if not venue:
@@ -213,13 +266,165 @@ def create_session():
         if show['city_id'] != venue['city_id']:
             return fail('场次添加失败：场馆必须属于演出所在城市')
         sid = execute("""INSERT INTO show_session(show_id,venue_id,show_time,sale_start,sale_status)
-                         VALUES(%s,%s,%s,%s,1)""",
-                      (show_id, int(b.get('venue_id')), show_time, sale_start))
+                         VALUES(%s,%s,%s,%s,%s)""",
+                      (show_id, venue_id, parsed_show_time, sale_start, sale_status))
         return ok({'session_id': sid}, msg='场次已添加')
+    except (TypeError, ValueError):
+        return fail('场次添加失败：场次或场馆信息不正确')
     except pymysql.err.IntegrityError:
         return fail('场次添加失败：该演出已存在相同开演时间')
     except Exception as e:
         return fail('场次添加失败：%s' % e)
+
+
+@admin_bp.route('/admin/session/<int:session_id>/update', methods=['POST'])
+@require_login(role='admin')
+def update_session(session_id):
+    b = request.get_json(silent=True) or request.form
+    conn = get_conn()
+    try:
+        show_id = int(b.get('show_id'))
+        venue_id = int(b.get('venue_id'))
+        show_time = _parse_show_time(b.get('show_time'))
+        if not show_time:
+            return fail('修改失败：开演时间格式不正确')
+        now = datetime.now()
+        if show_time <= now:
+            return fail('修改失败：开演时间必须晚于当前时间')
+
+        submitted_tiers = b.get('tiers') or []
+        new_tiers = b.get('new_tiers') or []
+        delete_tier_ids = b.get('delete_tier_ids') or []
+        if (not isinstance(submitted_tiers, list) or not isinstance(new_tiers, list)
+                or not isinstance(delete_tier_ids, list)):
+            return fail('修改失败：票档数据格式不正确')
+
+        with conn.cursor() as cur:
+            cur.execute("""SELECT show_id FROM show_session
+                           WHERE session_id=%s FOR UPDATE""", (session_id,))
+            session = cur.fetchone()
+            if not session:
+                return fail('修改失败：场次不存在')
+            if session['show_id'] != show_id:
+                return fail('修改失败：场次不属于当前演出')
+
+            cur.execute("SELECT city_id FROM show_item WHERE show_id=%s", (show_id,))
+            show = cur.fetchone()
+            if not show:
+                return fail('修改失败：演出不存在')
+            cur.execute("SELECT city_id,capacity FROM venue WHERE venue_id=%s FOR UPDATE", (venue_id,))
+            venue = cur.fetchone()
+            if not venue:
+                return fail('修改失败：场馆不存在')
+            if venue['city_id'] != show['city_id']:
+                return fail('修改失败：场馆必须属于演出所在城市')
+
+            cur.execute("""SELECT tier_id,tier_name,price,total_seats,sold_seats
+                           FROM ticket_tier WHERE session_id=%s FOR UPDATE""", (session_id,))
+            current_tiers = cur.fetchall()
+            current_by_id = {int(t['tier_id']): t for t in current_tiers}
+            try:
+                delete_tier_ids = [int(tier_id) for tier_id in delete_tier_ids]
+            except (TypeError, ValueError):
+                return fail('修改失败：待删除票档编号不正确')
+            if len(set(delete_tier_ids)) != len(delete_tier_ids):
+                return fail('修改失败：待删除票档重复')
+            for tier_id in delete_tier_ids:
+                tier = current_by_id.get(tier_id)
+                if not tier:
+                    return fail('修改失败：待删除票档不存在')
+                if int(tier['sold_seats']) > 0:
+                    return fail('已售票档不能删除')
+            changed_ids = set()
+            final_tiers = {int(t['tier_id']): {
+                'tier_id': int(t['tier_id']), 'tier_name': t['tier_name'],
+                'price': Decimal(str(t['price'])), 'total_seats': int(t['total_seats']),
+                'sold_seats': int(t['sold_seats'])
+            } for t in current_tiers}
+            for tier_id in delete_tier_ids:
+                final_tiers.pop(tier_id, None)
+
+            for item in submitted_tiers:
+                if not isinstance(item, dict):
+                    return fail('修改失败：票档数据格式不正确')
+                try:
+                    tier_id = int(item.get('tier_id'))
+                except (TypeError, ValueError):
+                    return fail('修改失败：票档编号不正确')
+                if tier_id not in current_by_id or tier_id in changed_ids or tier_id in delete_tier_ids:
+                    return fail('修改失败：票档不存在或重复')
+                changed_ids.add(tier_id)
+                name = str(item.get('tier_name') or '').strip()
+                price = _parse_positive_price(item.get('price'))
+                seats = _parse_positive_seats(item.get('total_seats'))
+                if not name or len(name) > 50 or price is None or seats is None:
+                    return fail('修改失败：票档名称不能为空，票价和总票数必须大于 0')
+                old = current_by_id[tier_id]
+                old_price = Decimal(str(old['price'])).quantize(Decimal('0.01'))
+                if int(old['sold_seats']) > 0 and (
+                        name != old['tier_name'] or price != old_price or seats != int(old['total_seats'])):
+                    return fail('该票档已售不为 0，无法修改')
+                if seats < int(old['sold_seats']):
+                    return fail('修改失败：总票数不能小于已售数量')
+                final_tiers[tier_id] = {
+                    'tier_id': tier_id, 'tier_name': name, 'price': price,
+                    'total_seats': seats, 'sold_seats': int(old['sold_seats'])
+                }
+
+            prepared_new = []
+            for item in new_tiers:
+                if not isinstance(item, dict):
+                    return fail('修改失败：新增票档数据格式不正确')
+                name = str(item.get('tier_name') or '').strip()
+                price = _parse_positive_price(item.get('price'))
+                seats = _parse_positive_seats(item.get('total_seats'))
+                if not name or len(name) > 50 or price is None or seats is None:
+                    return fail('修改失败：票档名称不能为空，票价和总票数必须大于 0')
+                prepared_new.append({'tier_name': name, 'price': price,
+                                     'total_seats': seats, 'sold_seats': 0})
+
+            allocated = sum(t['total_seats'] for t in final_tiers.values()) + sum(
+                t['total_seats'] for t in prepared_new)
+            if allocated > int(venue['capacity']):
+                return fail('票档总票数超过场馆容量')
+
+            for tier_id in delete_tier_ids:
+                cur.execute("DELETE FROM ticket_tier WHERE tier_id=%s AND session_id=%s AND sold_seats=0",
+                            (tier_id, session_id))
+                if cur.rowcount != 1:
+                    return fail('已售票档不能删除')
+
+            for tier_id, tier in final_tiers.items():
+                if tier_id in changed_ids:
+                    cur.execute("""UPDATE ticket_tier SET tier_name=%s,price=%s,total_seats=%s
+                                   WHERE tier_id=%s AND session_id=%s""",
+                                (tier['tier_name'], tier['price'], tier['total_seats'], tier_id, session_id))
+            for tier in prepared_new:
+                cur.execute("""INSERT INTO ticket_tier(session_id,tier_name,price,total_seats,sold_seats)
+                               VALUES(%s,%s,%s,%s,0)""",
+                            (session_id, tier['tier_name'], tier['price'], tier['total_seats']))
+
+            sale_start = _sale_start_for(show_time, now)
+            all_tiers = list(final_tiers.values()) + prepared_new
+            sale_status = _sale_status_for(show_time, sale_start, all_tiers, now)
+            cur.execute("""UPDATE show_session SET venue_id=%s,show_time=%s,
+                           sale_start=%s,sale_status=%s WHERE session_id=%s""",
+                        (venue_id, show_time, sale_start, sale_status, session_id))
+        conn.commit()
+        return ok(msg='场次已更新')
+    except pymysql.err.IntegrityError as e:
+        conn.rollback()
+        if getattr(e, 'args', [None])[0] == 1062:
+            return fail('修改失败：开演时间或票档名称重复')
+        return fail('修改失败：数据违反约束')
+    except (TypeError, ValueError):
+        conn.rollback()
+        return fail('修改失败：场次信息格式不正确')
+    except Exception as e:
+        conn.rollback()
+        return fail('修改失败：%s' % e)
+    finally:
+        conn.close()
 
 
 @admin_bp.route('/admin/session/<int:session_id>/delete', methods=['POST'])
@@ -244,23 +449,53 @@ def delete_session(session_id):
 @require_login(role='admin')
 def create_tier():
     b = request.get_json(silent=True) or request.form
+    conn = get_conn()
     try:
         session_id = int(b.get('session_id'))
-        session = q("SELECT show_id FROM show_session WHERE session_id=%s", (session_id,), one=True)
-        if not session:
-            return fail('票档添加失败：场次不存在')
         supplied_show_id = b.get('show_id')
-        if supplied_show_id is not None and int(supplied_show_id) != session['show_id']:
-            return fail('票档添加失败：场次不属于当前演出')
-        tid = execute("""INSERT INTO ticket_tier(session_id,tier_name,price,total_seats,sold_seats)
-                         VALUES(%s,%s,%s,%s,0)""",
-                      (session_id, b.get('tier_name'),
-                       float(b.get('price')), int(b.get('total_seats'))))
+        tier_name = str(b.get('tier_name') or '').strip()
+        price = _parse_positive_price(b.get('price'))
+        seats = _parse_positive_seats(b.get('total_seats'))
+        if not tier_name or len(tier_name) > 50 or price is None or seats is None:
+            return fail('票档添加失败：名称不能为空，票价和总票数必须大于 0')
+        with conn.cursor() as cur:
+            cur.execute("""SELECT se.show_id,se.show_time,se.sale_start,v.capacity
+                           FROM show_session se JOIN venue v ON v.venue_id=se.venue_id
+                           WHERE se.session_id=%s FOR UPDATE""", (session_id,))
+            session = cur.fetchone()
+            if not session:
+                return fail('票档添加失败：场次不存在')
+            if supplied_show_id is not None and int(supplied_show_id) != session['show_id']:
+                return fail('票档添加失败：场次不属于当前演出')
+            cur.execute("SELECT COALESCE(SUM(total_seats),0) AS allocated FROM ticket_tier WHERE session_id=%s",
+                        (session_id,))
+            allocated = int(cur.fetchone()['allocated'])
+            if allocated + seats > int(session['capacity']):
+                return fail('票档总票数超过场馆容量')
+            cur.execute("""INSERT INTO ticket_tier(session_id,tier_name,price,total_seats,sold_seats)
+                           VALUES(%s,%s,%s,%s,0)""",
+                        (session_id, tier_name, price, seats))
+            tid = cur.lastrowid
+            cur.execute("SELECT tier_name,total_seats,sold_seats FROM ticket_tier WHERE session_id=%s",
+                        (session_id,))
+            tiers = cur.fetchall()
+            now = datetime.now()
+            status = _sale_status_for(session['show_time'], session['sale_start'], tiers, now)
+            cur.execute("UPDATE show_session SET sale_status=%s WHERE session_id=%s",
+                        (status, session_id))
+        conn.commit()
         return ok({'tier_id': tid}, msg='票档已添加')
+    except (TypeError, ValueError):
+        conn.rollback()
+        return fail('票档添加失败：票档数据格式不正确')
     except pymysql.err.IntegrityError:
+        conn.rollback()
         return fail('票档添加失败：同一场次已存在同名票档')
     except Exception as e:
+        conn.rollback()
         return fail('票档添加失败：%s' % e)
+    finally:
+        conn.close()
 
 
 @admin_bp.route('/admin/tier/<int:tier_id>/delete', methods=['POST'])

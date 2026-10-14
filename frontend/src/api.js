@@ -14,7 +14,7 @@ api.interceptors.response.use(
     if (body.code === 401) {
       if (!silent) {
         ElMessage.warning('请先登录')
-        router.push('/login')
+        router.push({ path: '/login', query: { required: 'true' } })
       }
       return Promise.reject(body)
     }

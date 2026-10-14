@@ -10,7 +10,7 @@
     <el-button type="danger" size="large" style="width:100%;margin-top:20px" :loading="loading" @click="doLogin">登 录</el-button>
     <p class="muted" style="margin-top:16px;line-height:1.8">
       演示账号：用户 zhang_san / li_si / wang_wu / zhao_liu / chen_qi，管理员 admin；密码均 <b>123456</b>。
-      游客可直接 <router-link to="/series">浏览巡演</router-link>。
+      游客可直接 <router-link to="/series">浏览演出巡演</router-link>。
     </p>
   </el-card>
 </template>
@@ -34,7 +34,7 @@ async function doLogin() {
   try {
     const r = await store.login(role.value, username.value.trim(), password.value)
     ElMessage.success(r.msg)
-    router.push(role.value === 'admin' ? '/admin/shows' : '/series')
+    router.push('/series')
   } catch (e) {
     // 拦截器已提示
   } finally {

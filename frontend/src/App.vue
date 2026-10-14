@@ -44,11 +44,11 @@ onMounted(() => store.fetchMe())
 
 async function doLogout() {
   await store.logout()
-  router.push('/shows')
+  router.push('/series')
 }
 
 function goLogin() {
-  router.push('/login')
+  router.push({ path: '/login', query: { intent: 'login' } })
 }
 </script>
 

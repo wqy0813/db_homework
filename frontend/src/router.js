@@ -2,7 +2,10 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 
 const routes = [
   { path: '/', redirect: '/series' },
-  { path: '/login', component: () => import('./views/Login.vue') },
+  {
+    path: '/login', component: () => import('./views/Login.vue'),
+    beforeEnter: (to) => to.query.intent === 'login' || to.query.required === 'true' ? true : '/series'
+  },
   { path: '/series', component: () => import('./views/SeriesList.vue') },
   { path: '/series/:id', component: () => import('./views/SeriesDetail.vue') },
   { path: '/shows', component: () => import('./views/ShowList.vue') },
@@ -11,6 +14,7 @@ const routes = [
   { path: '/addresses', component: () => import('./views/Addresses.vue'), meta: { role: 'user' } },
   { path: '/attendees', component: () => import('./views/Attendees.vue'), meta: { role: 'user' } },
   { path: '/admin/shows', component: () => import('./views/admin/Shows.vue'), meta: { role: 'admin' } },
+  { path: '/admin/shows/create', component: () => import('./views/admin/ShowCreate.vue'), meta: { role: 'admin' } },
   { path: '/admin/shows/:id', component: () => import('./views/admin/ShowEdit.vue'), meta: { role: 'admin' } },
   { path: '/admin/stats', component: () => import('./views/admin/Stats.vue'), meta: { role: 'admin' } }
 ]
@@ -24,10 +28,10 @@ router.beforeEach((to) => {
     if (raw) {
       try {
         const u = JSON.parse(raw)
-        if (u.role !== to.meta.role) return '/shows'
+        if (u.role !== to.meta.role) return '/series'
       } catch (e) {
         sessionStorage.removeItem('user')
-        return '/login'
+        return { path: '/login', query: { required: 'true' } }
       }
     }
   }
