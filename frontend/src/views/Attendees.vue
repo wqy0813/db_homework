@@ -5,7 +5,7 @@
       <el-form-item label="姓名"><el-input v-model="form.attendee_name" placeholder="姓名" /></el-form-item>
       <el-form-item label="证件类型">
         <el-select v-model="form.id_type" style="width:130px">
-          <el-option v-for="(n,i) in ID_TYPE" :key="i" :value="i" :label="n" />
+          <el-option v-for="(n,i) in ID_TYPE" :key="i" :value="Number(i)" :label="n" />
         </el-select>
       </el-form-item>
       <el-form-item label="证件号"><el-input v-model="form.id_no" placeholder="证件号" /></el-form-item>
@@ -18,14 +18,29 @@
       <template #default="{row}">{{ ID_TYPE[row.id_type] }}</template>
     </el-table-column>
     <el-table-column prop="id_no" label="证件号" />
-    <el-table-column label="操作" width="100">
+    <el-table-column label="操作" width="170" fixed="right">
       <template #default="{row}">
-        <el-popconfirm title="确认删除该购票人？" @confirm="del(row.attendee_id)">
-          <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
-        </el-popconfirm>
+        <template v-if="row.used_by_order">
+          <el-tooltip placement="top"
+                      content="为保留历史订单信息，不能修改或删除，可以新增一位用于后续购票。">
+            <span style="margin-right:8px"><el-button size="small" disabled>编辑</el-button></span>
+          </el-tooltip>
+          <el-tooltip placement="top"
+                      content="为保留历史订单信息，不能修改或删除，可以新增一位用于后续购票。">
+            <span><el-button size="small" type="danger" plain disabled>删除</el-button></span>
+          </el-tooltip>
+        </template>
+        <template v-else>
+          <el-button size="small" @click="edit(row)">编辑</el-button>
+          <el-popconfirm title="确认删除该购票人？" @confirm="del(row.attendee_id)">
+            <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
+          </el-popconfirm>
+        </template>
       </template>
     </el-table-column>
   </el-table>
+
+  <AttendeeDialog v-model="dialogVisible" :attendee="editing" @saved="onSaved" />
 </template>
 
 <script setup>
@@ -33,10 +48,13 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { ID_TYPE } from '../store'
+import AttendeeDialog from '../components/AttendeeDialog.vue'
 
 const list = ref([])
 const loading = ref(false)
 const form = reactive({ attendee_name: '', id_type: 1, id_no: '' })
+const dialogVisible = ref(false)
+const editing = ref(null)
 
 async function load() {
   loading.value = true
@@ -44,15 +62,10 @@ async function load() {
 }
 async function add() {
   if (!form.attendee_name || !form.id_no) return ElMessage.warning('请填写完整')
-  // 证件号格式校验（避免乱码/测试数据）
   const idNo = form.id_no.trim()
   const idType = Number(form.id_type)
-  if (idType === 1 && !/^\d{17}[\dXx]$/.test(idNo)) {
-    return ElMessage.warning('身份证号应为 18 位（末位可为 X）')
-  }
-  if (idType !== 1 && idNo.length < 5) {
-    return ElMessage.warning('证件号格式不正确')
-  }
+  if (idType === 1 && !/^\d{17}[\dXx]$/.test(idNo)) return ElMessage.warning('身份证号应为 18 位（末位可为 X）')
+  if (idType !== 1 && idNo.length < 5) return ElMessage.warning('证件号格式不正确')
   await api.post('/attendees/add', { ...form, id_no: idNo })
   ElMessage.success('已添加')
   Object.assign(form, { attendee_name: '', id_no: '' })
@@ -62,5 +75,10 @@ async function del(id) {
   await api.post('/attendees/delete', { attendee_id: id })
   ElMessage.success('已删除'); load()
 }
+function edit(row) {
+  editing.value = row
+  dialogVisible.value = true
+}
+function onSaved() { load() }
 onMounted(load)
 </script>

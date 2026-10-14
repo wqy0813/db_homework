@@ -44,7 +44,7 @@ onMounted(() => store.fetchMe())
 
 async function doLogout() {
   await store.logout()
-  router.push('/shows')
+  router.push('/series')
 }
 
 function goLogin() {

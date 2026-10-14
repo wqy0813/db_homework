@@ -36,7 +36,11 @@ def _address_values(body):
 @require_login(role='user')
 def list_addresses():
     uid = current_user()['id']
-    rows = q("SELECT * FROM shipping_address WHERE user_id=%s ORDER BY is_default DESC,address_id", (uid,))
+    rows = q("""SELECT a.*,
+                       EXISTS(SELECT 1 FROM ticket_order o WHERE o.address_id=a.address_id) AS used_by_order
+                FROM shipping_address a
+                WHERE a.user_id=%s
+                ORDER BY a.is_default DESC, a.address_id""", (uid,))
     return ok({'list': rows})
 
 
@@ -93,7 +97,7 @@ def update_address():
             cur.execute("SELECT 1 FROM ticket_order WHERE address_id=%s LIMIT 1", (aid,))
             if cur.fetchone():
                 conn.rollback()
-                return fail('该收货信息已用于订单，不能修改历史订单地址')
+                return fail('为保留历史订单信息，该收货地址不能修改或删除，可以新增一条用于后续购票')
             if is_default:
                 cur.execute("UPDATE shipping_address SET is_default=0 WHERE user_id=%s", (uid,))
             replacement = None
@@ -175,7 +179,7 @@ def delete_address():
         return ok(msg='收货信息已删除')
     except pymysql.err.IntegrityError:
         conn.rollback()
-        return fail('删除失败：该收货信息已被订单引用，为保留历史订单不可删除')
+        return fail('删除失败：该收货地址已被订单引用，为保留历史订单不可删除，可以新增一条用于后续购票')
     except Exception as e:
         conn.rollback()
         return fail('删除收货信息失败：%s' % e)
@@ -205,7 +209,11 @@ def _attendee_values(body):
 @require_login(role='user')
 def list_attendees():
     uid = current_user()['id']
-    rows = q("SELECT * FROM attendee WHERE user_id=%s ORDER BY attendee_id", (uid,))
+    rows = q("""SELECT a.*,
+                       EXISTS(SELECT 1 FROM order_item oi WHERE oi.attendee_id=a.attendee_id) AS used_by_order
+                FROM attendee a
+                WHERE a.user_id=%s
+                ORDER BY a.attendee_id""", (uid,))
     return ok({'list': rows})
 
 
@@ -238,7 +246,7 @@ def update_attendee():
         if not q("SELECT 1 FROM attendee WHERE attendee_id=%s AND user_id=%s", (aid, uid), one=True):
             return fail('购票人不存在或无权操作')
         if q("SELECT 1 FROM order_item WHERE attendee_id=%s LIMIT 1", (aid,), one=True):
-            return fail('该购票人已用于订单，不能修改历史订单购票人信息')
+            return fail('为保留历史订单信息，该购票人不能修改或删除，可以新增一位用于后续购票')
         execute("""UPDATE attendee SET attendee_name=%s,id_type=%s,id_no=%s
                    WHERE attendee_id=%s AND user_id=%s""", (name, id_type, id_no, aid, uid))
         return ok(msg='购票人已更新')
@@ -257,4 +265,4 @@ def delete_attendee():
     except (TypeError, ValueError):
         return fail('购票人编号不正确')
     except pymysql.err.IntegrityError:
-        return fail('删除失败：该购票人已被订单引用，为保留历史订单不可删除')
+        return fail('删除失败：该购票人已被订单引用，为保留历史订单不可删除，可以新增一位用于后续购票')

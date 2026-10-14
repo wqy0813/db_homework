@@ -53,3 +53,13 @@ def verify_password(stored_hash, input_pw):
         return check_password_hash(stored_hash, input_pw)
     except Exception:
         return False
+
+
+def hash_password(input_pw):
+    """注册时生成口令哈希，与 verify_password（werkzeug）配套。
+
+    注意：werkzeug 哈希长度约 100+ 字符，需要 password_hash 列为 VARCHAR(255)，
+    升级 SQL 见 docs/注册功能数据库升级说明.md（由成员 1 统一执行）。
+    """
+    from werkzeug.security import generate_password_hash
+    return generate_password_hash(input_pw)
