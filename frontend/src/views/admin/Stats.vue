@@ -17,18 +17,18 @@
   <el-card shadow="never" style="margin-bottom:16px">
     <h3>每日销售趋势（折线图）</h3>
     <div v-if="!isEmpty" ref="dailyRef" class="chart-box" style="width:100%;height:340px"></div>
-    <el-empty v-else description="暂无销售数据" :image-size="80" style="height:340px" />
+    <el-empty v-else description="当前时间段暂无售票数据" :image-size="80" style="height:340px" />
   </el-card>
   <el-row :gutter="16">
     <el-col :span="12" style="min-width:0">
       <el-card shadow="never"><h3>各类型销售额（饼图）</h3>
         <div v-if="!isEmpty" ref="catRef" class="chart-box" style="width:100%;height:320px"></div>
-        <el-empty v-else description="暂无销售数据" :image-size="70" style="height:320px" /></el-card>
+        <el-empty v-else description="当前时间段暂无售票数据" :image-size="70" style="height:320px" /></el-card>
     </el-col>
     <el-col :span="12" style="min-width:0">
       <el-card shadow="never"><h3>各城市售票数（柱状图）</h3>
         <div v-if="!isEmpty" ref="cityRef" class="chart-box" style="width:100%;height:320px"></div>
-        <el-empty v-else description="暂无销售数据" :image-size="70" style="height:320px" /></el-card>
+        <el-empty v-else description="当前时间段暂无售票数据" :image-size="70" style="height:320px" /></el-card>
     </el-col>
   </el-row>
   <el-card shadow="never" style="margin-top:16px">
@@ -81,7 +81,10 @@ async function load() {
   Object.assign(total, d.total)
   top.value = d.top
   await nextTick()
-  if (isEmpty.value) return   // 空区间：仅显示“暂无销售数据”
+  if (isEmpty.value) {
+    disposeCharts()
+    return   // 空区间：仅显示“暂无销售数据”
+  }
   // 等两帧确保布局完成再渲染，避免容器宽度为 0
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (disposed) return
@@ -128,11 +131,17 @@ function renderCity(cities) {
 }
 
 function onResize(){ Object.values(charts).forEach(c => c && c.resize()) }
+function disposeCharts() {
+  Object.keys(charts).forEach(key => {
+    charts[key]?.dispose()
+    delete charts[key]
+  })
+}
 window.addEventListener('resize', onResize)
 onBeforeUnmount(() => {
   disposed = true
   window.removeEventListener('resize', onResize)
-  Object.values(charts).forEach(c => c && c.dispose())
+  disposeCharts()
 })
 
 onMounted(load)
