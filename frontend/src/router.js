@@ -7,6 +7,7 @@ const routes = [
     beforeEnter: (to) => to.query.intent === 'login' || to.query.required === 'true' ? true : '/series'
   },
   { path: '/series', component: () => import('./views/SeriesList.vue') },
+  { path: '/series/group', component: () => import('./views/SeriesDetail.vue') },
   { path: '/series/:id', component: () => import('./views/SeriesDetail.vue') },
   { path: '/shows', component: () => import('./views/ShowList.vue') },
   { path: '/shows/:id', component: () => import('./views/ShowDetail.vue') },
@@ -16,6 +17,9 @@ const routes = [
   { path: '/admin/shows', component: () => import('./views/admin/Shows.vue'), meta: { role: 'admin' } },
   { path: '/admin/shows/create', component: () => import('./views/admin/ShowCreate.vue'), meta: { role: 'admin' } },
   { path: '/admin/shows/:id', component: () => import('./views/admin/ShowEdit.vue'), meta: { role: 'admin' } },
+  { path: '/admin/series', component: () => import('./views/admin/SeriesManage.vue'), meta: { role: 'admin' } },
+  { path: '/admin/series/group', component: () => import('./views/admin/SeriesDetail.vue'), meta: { role: 'admin' } },
+  { path: '/admin/series/:id', component: () => import('./views/admin/SeriesDetail.vue'), meta: { role: 'admin' } },
   { path: '/admin/stats', component: () => import('./views/admin/Stats.vue'), meta: { role: 'admin' } }
 ]
 

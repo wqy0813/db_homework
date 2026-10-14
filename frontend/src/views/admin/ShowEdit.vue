@@ -1,9 +1,9 @@
 <template>
-  <el-button link @click="$router.push('/admin/shows')">← 返回演出管理</el-button>
+  <el-button link @click="$router.push(backPath)">← 返回{{ route.query.group_name || route.query.series_id || data.show?.series_id ? '巡演详情' : '演出管理' }}</el-button>
   <div v-loading="loading">
-    <h2>演出维护：{{ data.show && data.show.show_name }}（ID {{ data.show && data.show.show_id }}）</h2>
+    <h2>{{ route.query.group_name || route.query.series_id || data.show?.series_id ? '巡演站点维护' : '演出维护' }}：{{ data.show && data.show.show_name }}（ID {{ data.show && data.show.show_id }}）</h2>
 
-    <el-card shadow="never" style="margin-bottom:16px">
+    <el-card v-if="!route.query.group_name" shadow="never" style="margin-bottom:16px">
       <h3 style="margin-bottom:12px">演出基本信息</h3>
       <el-form inline @submit.prevent>
         <el-form-item label="名称"><el-input v-model="showForm.show_name" style="width:240px" /></el-form-item>
@@ -181,6 +181,10 @@ import { STATUS_NAMES } from '../../store'
 const route = useRoute()
 const loading = ref(false)
 const data = ref({ show: {}, sessions: [], venues: [], tiers: {} })
+const backPath = computed(() => route.query.group_name
+  ? { path: '/admin/series/group', query: { name: route.query.group_name } }
+  : route.query.series_id ? `/admin/series/${route.query.series_id}`
+    : data.value.show?.series_id ? `/admin/series/${data.value.show.series_id}` : '/admin/shows')
 const cities = ref([])
 const categories = ref([])
 const showForm = reactive({ show_name: '', category_id: null, city_id: null, poster_url: '', description: '' })

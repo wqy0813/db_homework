@@ -109,7 +109,16 @@ def admin_shows():
                 params.append(int(value))
             except (TypeError, ValueError):
                 return fail('筛选条件不正确')
-    where = ' WHERE category_id<>%s'
+    where = ''' WHERE category_id<>%s
+                AND series_id IS NULL
+                AND NOT (
+                    series_id IS NULL AND show_name LIKE '%%·%%'
+                    AND (SELECT COUNT(*) FROM show_item x
+                         WHERE x.series_id IS NULL
+                           AND x.category_id=v_show_list.category_id
+                           AND SUBSTRING_INDEX(x.show_name,'·',1)=
+                               SUBSTRING_INDEX(v_show_list.show_name,'·',1)) > 1
+                )'''
     if conditions:
         where += ' AND ' + ' AND '.join(conditions)
     rows = q("SELECT * FROM v_show_list" + where + " ORDER BY show_id DESC", params)
@@ -190,18 +199,24 @@ def update_show(show_id):
         if category_id == HIDDEN_CATEGORY_ID:
             return fail('该演出类型已停用')
         target_city = int(b.get('city_id'))
-        show = q("SELECT city_id FROM show_item WHERE show_id=%s", (show_id,), one=True)
+        show = q("SELECT city_id,series_id,category_id FROM show_item WHERE show_id=%s", (show_id,), one=True)
         if not show:
             return fail('演出不存在')
+        if show['series_id'] is not None:
+            series = q("SELECT category_id FROM show_series WHERE series_id=%s",
+                       (show['series_id'],), one=True)
+            if series and category_id != series['category_id']:
+                return fail('巡演站点类型必须与所属巡演一致')
         if show['city_id'] != target_city:
             session_count = q("SELECT COUNT(*) AS c FROM show_session WHERE show_id=%s",
                               (show_id,), one=True)['c']
             if session_count:
                 return fail('该演出已有场次，不能直接更换城市；请先处理场次')
-        execute("""UPDATE show_item SET show_name=%s,category_id=%s,city_id=%s,poster_url=%s,description=%s
-                   WHERE show_id=%s""",
+        execute("""UPDATE show_item SET show_name=%s,category_id=%s,city_id=%s,poster_url=%s,
+                   description=%s,series_id=%s WHERE show_id=%s""",
                 (b.get('show_name'), category_id, target_city,
-                 b.get('poster_url') or '', b.get('description') or '', show_id))
+                 b.get('poster_url') or '', b.get('description') or '',
+                 show['series_id'], show_id))
         return ok(msg='演出信息已更新')
     except (TypeError, ValueError):
         return fail('演出信息格式不正确')
@@ -213,10 +228,471 @@ def update_show(show_id):
 @require_login(role='admin')
 def delete_show(show_id):
     try:
+        show = q("SELECT series_id FROM show_item WHERE show_id=%s", (show_id,), one=True)
+        if not show:
+            return fail('演出不存在')
+        series_id = show.get('series_id')
+        if series_id is not None:
+            return fail('该演出属于巡演，请在巡演管理中操作站点')
         execute("DELETE FROM show_item WHERE show_id=%s", (show_id,))
         return ok(msg='演出及其场次、票档、图片已级联删除')
     except pymysql.err.IntegrityError:
         return fail('删除失败：该演出已有订单，为保留销售数据不可删除')
+
+
+# ---------------------------------------------------------------------------
+# 巡演管理：巡演 → 站点（show_item）→ 场次（show_session）
+# ---------------------------------------------------------------------------
+
+@admin_bp.route('/admin/series')
+@require_login(role='admin')
+def admin_series():
+    refresh_sale_statuses()
+    keyword = (request.args.get('keyword') or '').strip()
+    category_id = request.args.get('category_id')
+    city_id = request.args.get('city_id')
+    status = request.args.get('show_status')
+    sql = """
+        SELECT ser.series_id, ser.series_name, ser.main_artist, ser.poster_url,
+               ser.category_id, cat.category_name, ser.description, ser.create_time,
+               COUNT(DISTINCT sh.show_id) AS station_count,
+               COUNT(DISTINCT sh.city_id) AS city_count,
+               MIN(vl.min_price) AS min_price, MAX(vl.max_price) AS max_price,
+               CASE
+                 WHEN MAX(CASE WHEN vl.show_status=2 THEN 1 ELSE 0 END)>0 THEN 2
+                 WHEN MAX(CASE WHEN vl.show_status=1 THEN 1 ELSE 0 END)>0 THEN 1
+                 WHEN MAX(CASE WHEN vl.show_status=3 THEN 1 ELSE 0 END)>0 THEN 3
+                 WHEN MAX(CASE WHEN vl.show_status=4 THEN 1 ELSE 0 END)>0 THEN 4
+                 ELSE 3
+               END AS show_status
+        FROM show_series ser
+        JOIN category cat ON cat.category_id=ser.category_id
+        LEFT JOIN show_item sh ON sh.series_id=ser.series_id
+        LEFT JOIN v_show_list vl ON vl.show_id=sh.show_id
+        WHERE ser.category_id<>%s
+    """
+    args = [HIDDEN_CATEGORY_ID]
+    if keyword:
+        sql += " AND (ser.series_name LIKE %s OR ser.main_artist LIKE %s)"
+        args.extend(['%%%s%%' % keyword, '%%%s%%' % keyword])
+    if category_id:
+        try:
+            sql += " AND ser.category_id=%s"; args.append(int(category_id))
+        except (TypeError, ValueError):
+            return fail('类型筛选条件不正确')
+    if city_id:
+        try:
+            sql += " AND EXISTS (SELECT 1 FROM show_item sx WHERE sx.series_id=ser.series_id AND sx.city_id=%s)"
+            args.append(int(city_id))
+        except (TypeError, ValueError):
+            return fail('城市筛选条件不正确')
+    sql += " GROUP BY ser.series_id, ser.series_name, ser.main_artist, ser.poster_url, ser.category_id, cat.category_name, ser.description, ser.create_time"
+    if status:
+        try:
+            sql += " HAVING show_status=%s"; args.append(int(status))
+        except (TypeError, ValueError):
+            return fail('状态筛选条件不正确')
+    sql += " ORDER BY ser.create_time DESC, ser.series_id DESC"
+    rows = [_s(row) for row in q(sql, args)]
+    for row in rows:
+        row['poster_url'] = resolve_poster(row['series_name'], row.get('category_id'),
+                                           row.get('poster_url'), row.get('main_artist'))
+
+    # 与游客巡演页一致：把尚未写入 show_series 的多站点批量数据按名称前缀聚合。
+    inferred_sql = """
+        SELECT SUBSTRING_INDEX(sh.show_name,'·',1) AS series_name,
+               SUBSTRING_INDEX(sh.show_name,'·',1) AS main_artist,
+               MIN(sh.poster_url) AS poster_url,
+               sh.category_id, cat.category_name,
+               COUNT(DISTINCT sh.show_id) AS station_count,
+               COUNT(DISTINCT sh.city_id) AS city_count,
+               MIN(vl.min_price) AS min_price, MAX(vl.max_price) AS max_price,
+               MAX(sh.create_time) AS create_time,
+               CASE
+                 WHEN MAX(CASE WHEN vl.show_status=2 THEN 1 ELSE 0 END)>0 THEN 2
+                 WHEN MAX(CASE WHEN vl.show_status=1 THEN 1 ELSE 0 END)>0 THEN 1
+                 WHEN MAX(CASE WHEN vl.show_status=3 THEN 1 ELSE 0 END)>0 THEN 3
+                 WHEN MAX(CASE WHEN vl.show_status=4 THEN 1 ELSE 0 END)>0 THEN 4
+                 ELSE 3
+               END AS show_status
+        FROM show_item sh JOIN category cat ON cat.category_id=sh.category_id
+        LEFT JOIN show_session se ON se.show_id=sh.show_id
+        LEFT JOIN v_show_list vl ON vl.show_id=sh.show_id
+        WHERE sh.series_id IS NULL AND sh.category_id<>%s AND sh.show_name LIKE '%%·%%'
+    """
+    inferred_args = [HIDDEN_CATEGORY_ID]
+    if keyword:
+        inferred_sql += " AND SUBSTRING_INDEX(sh.show_name,'·',1) LIKE %s"
+        inferred_args.append('%%%s%%' % keyword)
+    if category_id:
+        inferred_sql += " AND sh.category_id=%s"; inferred_args.append(int(category_id))
+    if city_id:
+        inferred_sql += " AND EXISTS (SELECT 1 FROM show_item sx WHERE sx.series_id IS NULL AND sx.city_id=%s AND sx.category_id=sh.category_id AND SUBSTRING_INDEX(sx.show_name,'·',1)=SUBSTRING_INDEX(sh.show_name,'·',1))"
+        inferred_args.append(int(city_id))
+    inferred_sql += " GROUP BY SUBSTRING_INDEX(sh.show_name,'·',1), sh.category_id, cat.category_name HAVING COUNT(DISTINCT sh.show_id)>1"
+    if status:
+        inferred_sql += " AND show_status=%s"; inferred_args.append(int(status))
+    for row in q(inferred_sql, inferred_args):
+        row['series_id'] = None
+        row['group_name'] = row['series_name']
+        row['inferred'] = True
+        row = _s(row)
+        row['poster_url'] = resolve_poster(row['series_name'], row.get('category_id'),
+                                           row.get('poster_url'), row.get('main_artist'))
+        rows.append(row)
+    rows.sort(key=lambda row: (row.get('create_time') or '', row.get('series_name') or ''), reverse=True)
+    cities = q("SELECT * FROM city ORDER BY city_id")
+    categories = q("SELECT * FROM category WHERE category_id<>%s ORDER BY category_id",
+                   (HIDDEN_CATEGORY_ID,))
+    return ok({'list': rows, 'cities': cities, 'categories': categories})
+
+
+@admin_bp.route('/admin/series/create', methods=['POST'])
+@require_login(role='admin')
+def create_series():
+    b = request.get_json(silent=True) or request.form
+    name = str(b.get('series_name') or '').strip()
+    artist = str(b.get('main_artist') or '').strip()
+    description = str(b.get('description') or '').strip()
+    try:
+        category_id = int(b.get('category_id'))
+        if not name or len(name) > 100:
+            return fail('巡演名称不能为空，且不能超过 100 个字符')
+        if category_id == HIDDEN_CATEGORY_ID:
+            return fail('该演出类型已停用')
+        sid = execute("""INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description)
+                        VALUES(%s,%s,%s,%s,%s)""",
+                      (name, category_id, artist or None, b.get('poster_url') or '', description))
+        return ok({'series_id': sid}, msg='巡演已创建')
+    except pymysql.err.IntegrityError:
+        return fail('创建失败：巡演名称已存在')
+    except (TypeError, ValueError):
+        return fail('巡演类型不正确')
+    except Exception as e:
+        return fail('创建失败：%s' % e)
+
+
+@admin_bp.route('/admin/series/<int:series_id>')
+@require_login(role='admin')
+def admin_series_detail(series_id):
+    refresh_sale_statuses()
+    series = q("""SELECT ser.*, cat.category_name FROM show_series ser
+                 JOIN category cat ON cat.category_id=ser.category_id
+                 WHERE ser.series_id=%s AND ser.category_id<>%s""",
+               (series_id, HIDDEN_CATEGORY_ID), one=True)
+    if not series:
+        return fail('巡演不存在')
+    stations = q("""
+        SELECT sh.show_id, sh.show_name, sh.city_id, c.city_name, sh.category_id,
+               COUNT(DISTINCT se.session_id) AS session_count,
+               MIN(vl.min_price) AS min_price, MAX(vl.max_price) AS max_price,
+               CASE
+                 WHEN MAX(CASE WHEN vl.show_status=2 THEN 1 ELSE 0 END)>0 THEN 2
+                 WHEN MAX(CASE WHEN vl.show_status=1 THEN 1 ELSE 0 END)>0 THEN 1
+                 WHEN MAX(CASE WHEN vl.show_status=3 THEN 1 ELSE 0 END)>0 THEN 3
+                 WHEN MAX(CASE WHEN vl.show_status=4 THEN 1 ELSE 0 END)>0 THEN 4
+                 ELSE 3
+               END AS show_status
+        FROM show_item sh JOIN city c ON c.city_id=sh.city_id
+        LEFT JOIN show_session se ON se.show_id=sh.show_id
+        LEFT JOIN v_show_list vl ON vl.show_id=sh.show_id
+        WHERE sh.series_id=%s
+        GROUP BY sh.show_id, sh.show_name, sh.city_id, c.city_name, sh.category_id
+        ORDER BY c.city_name, sh.show_id
+    """, (series_id,))
+    out = _s(series)
+    out['poster_url'] = resolve_poster(out['series_name'], out.get('category_id'),
+                                       out.get('poster_url'), out.get('main_artist'))
+    return ok({'series': out, 'stations': [_s(station) for station in stations]})
+
+
+def _promote_inferred_group(cur, group_name, series_name=None, category_id=None,
+                           main_artist=None, poster_url=None, description=None):
+    """Persist a legacy name-group as a real series when an admin edits it."""
+    cur.execute("""SELECT show_id,show_name,category_id,poster_url,description
+                   FROM show_item WHERE series_id IS NULL AND category_id<>%s
+                     AND SUBSTRING_INDEX(show_name,'·',1)=%s FOR UPDATE""",
+                (HIDDEN_CATEGORY_ID, group_name))
+    stations = cur.fetchall()
+    if len(stations) < 2:
+        return None
+    series_name = (series_name or group_name).strip()
+    category_id = int(category_id or stations[0]['category_id'])
+    main_artist = main_artist or group_name
+    poster_url = poster_url if poster_url is not None else stations[0].get('poster_url') or ''
+    description = description if description is not None else stations[0].get('description') or ''
+    cur.execute("""INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description)
+                   VALUES(%s,%s,%s,%s,%s)""",
+                (series_name, category_id, main_artist, poster_url, description))
+    new_series_id = cur.lastrowid
+    for station in stations:
+        suffix = station['show_name'][len(group_name):]
+        cur.execute("""UPDATE show_item SET series_id=%s,category_id=%s,show_name=%s
+                       WHERE show_id=%s AND series_id IS NULL""",
+                    (new_series_id, category_id, series_name + suffix, station['show_id']))
+    return new_series_id
+
+
+@admin_bp.route('/admin/series/group')
+@require_login(role='admin')
+def admin_inferred_series_detail():
+    refresh_sale_statuses()
+    name = (request.args.get('name') or '').strip()
+    if not name:
+        return fail('巡演名称不能为空')
+    stations = q("""
+        SELECT sh.show_id, sh.show_name, sh.city_id, c.city_name, sh.category_id,
+               COUNT(DISTINCT se.session_id) AS session_count,
+               MIN(vl.min_price) AS min_price, MAX(vl.max_price) AS max_price,
+               CASE
+                 WHEN MAX(CASE WHEN vl.show_status=2 THEN 1 ELSE 0 END)>0 THEN 2
+                 WHEN MAX(CASE WHEN vl.show_status=1 THEN 1 ELSE 0 END)>0 THEN 1
+                 WHEN MAX(CASE WHEN vl.show_status=3 THEN 1 ELSE 0 END)>0 THEN 3
+                 WHEN MAX(CASE WHEN vl.show_status=4 THEN 1 ELSE 0 END)>0 THEN 4
+                 ELSE 3
+               END AS show_status
+        FROM show_item sh JOIN city c ON c.city_id=sh.city_id
+        LEFT JOIN show_session se ON se.show_id=sh.show_id
+        LEFT JOIN v_show_list vl ON vl.show_id=sh.show_id
+        WHERE sh.series_id IS NULL AND sh.category_id<>%s
+          AND SUBSTRING_INDEX(sh.show_name,'·',1)=%s
+        GROUP BY sh.show_id, sh.show_name, sh.city_id, c.city_name, sh.category_id
+        ORDER BY c.city_name, sh.show_id
+    """, (HIDDEN_CATEGORY_ID, name))
+    if len(stations) < 2:
+        return fail('该巡演已变更或不存在')
+    sample = q("""SELECT sh.category_id,cat.category_name,MIN(sh.poster_url) AS poster_url,
+                         MIN(sh.description) AS description
+                  FROM show_item sh JOIN category cat ON cat.category_id=sh.category_id
+                  WHERE sh.series_id IS NULL AND sh.category_id<>%s
+                    AND SUBSTRING_INDEX(sh.show_name,'·',1)=%s
+                  GROUP BY sh.category_id,cat.category_name LIMIT 1""",
+               (HIDDEN_CATEGORY_ID, name), one=True) or {}
+    series = {'series_id': None, 'series_name': name, 'main_artist': name,
+              'group_name': name, 'inferred': True, **sample}
+    series['poster_url'] = resolve_poster(name, series.get('category_id'),
+                                           series.get('poster_url'), name)
+    return ok({'series': _s(series), 'stations': [_s(station) for station in stations]})
+
+
+@admin_bp.route('/admin/series/group/update', methods=['POST'])
+@require_login(role='admin')
+def update_inferred_series():
+    b = request.get_json(silent=True) or request.form
+    group_name = str(b.get('group_name') or '').strip()
+    name = str(b.get('series_name') or '').strip()
+    artist = str(b.get('main_artist') or '').strip()
+    description = str(b.get('description') or '').strip()
+    try:
+        category_id = int(b.get('category_id'))
+        if not group_name or not name or len(name) > 100 or category_id == HIDDEN_CATEGORY_ID:
+            return fail('巡演名称和类型不正确')
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                sid = _promote_inferred_group(cur, group_name, name, category_id,
+                                              artist, b.get('poster_url') or '', description)
+                if sid is None:
+                    return fail('该巡演已变更或不存在')
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return ok({'series_id': sid}, msg='巡演信息已更新')
+    except pymysql.err.IntegrityError:
+        return fail('更新失败：巡演名称已存在')
+    except (TypeError, ValueError):
+        return fail('巡演类型不正确')
+    except Exception as e:
+        return fail('更新失败：%s' % e)
+
+
+@admin_bp.route('/admin/series/group/delete', methods=['POST'])
+@require_login(role='admin')
+def delete_inferred_series():
+    b = request.get_json(silent=True) or request.form
+    name = str(b.get('group_name') or '').strip()
+    if not name:
+        return fail('巡演名称不能为空')
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""DELETE FROM show_item WHERE series_id IS NULL AND category_id<>%s
+                           AND SUBSTRING_INDEX(show_name,'·',1)=%s""",
+                        (HIDDEN_CATEGORY_ID, name))
+            if cur.rowcount < 2:
+                conn.rollback()
+                return fail('该巡演已变更或不存在')
+        conn.commit()
+        return ok(msg='巡演及其站点已删除')
+    except pymysql.err.IntegrityError:
+        conn.rollback()
+        return fail('删除失败：巡演下已有订单，为保留销售数据不可删除')
+    except Exception as e:
+        conn.rollback()
+        return fail('删除失败：%s' % e)
+    finally:
+        conn.close()
+
+
+@admin_bp.route('/admin/series/group/stations/create', methods=['POST'])
+@require_login(role='admin')
+def create_inferred_station():
+    b = request.get_json(silent=True) or request.form
+    group_name = str(b.get('group_name') or '').strip()
+    show_name = str(b.get('show_name') or '').strip()
+    try:
+        city_id = int(b.get('city_id'))
+        if not group_name or not show_name or len(show_name) > 100:
+            return fail('巡演和站点名称不能为空')
+        if not q("SELECT city_id FROM city WHERE city_id=%s", (city_id,), one=True):
+            return fail('城市不存在')
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                series_id = _promote_inferred_group(cur, group_name)
+                if series_id is None:
+                    return fail('该巡演已变更或不存在')
+                cur.execute("SELECT category_id FROM show_series WHERE series_id=%s", (series_id,))
+                category_id = cur.fetchone()['category_id']
+                cur.execute("""INSERT INTO show_item(show_name,category_id,city_id,series_id,
+                               poster_url,description,admin_id) VALUES(%s,%s,%s,%s,%s,%s,%s)""",
+                            (show_name, category_id, city_id, series_id, '',
+                             b.get('description') or '', current_user()['id']))
+                show_id = cur.lastrowid
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return ok({'series_id': series_id, 'show_id': show_id}, msg='巡演站点已添加')
+    except (TypeError, ValueError):
+        return fail('城市信息不正确')
+    except Exception as e:
+        return fail('添加站点失败：%s' % e)
+
+
+@admin_bp.route('/admin/series/group/stations/<int:show_id>/delete', methods=['POST'])
+@require_login(role='admin')
+def delete_inferred_station(show_id):
+    b = request.get_json(silent=True) or request.form
+    name = str(b.get('group_name') or '').strip()
+    if not name:
+        return fail('巡演名称不能为空')
+    try:
+        execute("""DELETE FROM show_item WHERE show_id=%s AND series_id IS NULL
+                   AND SUBSTRING_INDEX(show_name,'·',1)=%s""", (show_id, name))
+        remaining = q("""SELECT COUNT(*) AS c FROM show_item WHERE series_id IS NULL
+                        AND category_id<>%s AND SUBSTRING_INDEX(show_name,'·',1)=%s""",
+                      (HIDDEN_CATEGORY_ID, name), one=True)['c']
+        return ok({'became_single': remaining == 1}, msg='巡演站点及其场次已删除')
+    except pymysql.err.IntegrityError:
+        return fail('删除失败：该站点已有订单，为保留销售数据不可删除')
+
+
+@admin_bp.route('/admin/series/<int:series_id>/update', methods=['POST'])
+@require_login(role='admin')
+def update_series(series_id):
+    b = request.get_json(silent=True) or request.form
+    name = str(b.get('series_name') or '').strip()
+    artist = str(b.get('main_artist') or '').strip()
+    description = str(b.get('description') or '').strip()
+    try:
+        category_id = int(b.get('category_id'))
+        if not name or len(name) > 100:
+            return fail('巡演名称不能为空，且不能超过 100 个字符')
+        if category_id == HIDDEN_CATEGORY_ID:
+            return fail('该演出类型已停用')
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT series_id FROM show_series WHERE series_id=%s FOR UPDATE", (series_id,))
+                if not cur.fetchone():
+                    return fail('巡演不存在')
+                cur.execute("""UPDATE show_series SET series_name=%s,category_id=%s,main_artist=%s,
+                               poster_url=%s,description=%s WHERE series_id=%s""",
+                            (name, category_id, artist or None, b.get('poster_url') or '', description, series_id))
+                cur.execute("UPDATE show_item SET category_id=%s WHERE series_id=%s",
+                            (category_id, series_id))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return ok(msg='巡演信息已更新')
+    except pymysql.err.IntegrityError:
+        return fail('更新失败：巡演名称已存在')
+    except (TypeError, ValueError):
+        return fail('巡演类型不正确')
+    except Exception as e:
+        return fail('更新失败：%s' % e)
+
+
+@admin_bp.route('/admin/series/<int:series_id>/delete', methods=['POST'])
+@require_login(role='admin')
+def delete_series(series_id):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT series_id FROM show_series WHERE series_id=%s FOR UPDATE", (series_id,))
+            if not cur.fetchone():
+                return fail('巡演不存在')
+            # 删除巡演时一并移除站点及其场次、票档；已有订单的站点受外键保护。
+            cur.execute("DELETE FROM show_item WHERE series_id=%s", (series_id,))
+            cur.execute("DELETE FROM show_series WHERE series_id=%s", (series_id,))
+        conn.commit()
+        return ok(msg='巡演及其站点已删除')
+    except pymysql.err.IntegrityError:
+        conn.rollback()
+        return fail('删除失败：巡演下已有订单，为保留销售数据不可删除')
+    except Exception as e:
+        conn.rollback()
+        return fail('删除失败：%s' % e)
+    finally:
+        conn.close()
+
+
+@admin_bp.route('/admin/series/<int:series_id>/stations/create', methods=['POST'])
+@require_login(role='admin')
+def create_series_station(series_id):
+    b = request.get_json(silent=True) or request.form
+    name = str(b.get('show_name') or '').strip()
+    try:
+        city_id = int(b.get('city_id'))
+        series = q("SELECT series_name,category_id FROM show_series WHERE series_id=%s", (series_id,), one=True)
+        if not series:
+            return fail('巡演不存在')
+        if not name or len(name) > 100:
+            return fail('站点名称不能为空，且不能超过 100 个字符')
+        if not q("SELECT city_id FROM city WHERE city_id=%s", (city_id,), one=True):
+            return fail('城市不存在')
+        show_id = execute("""INSERT INTO show_item(show_name,category_id,city_id,series_id,
+                           poster_url,description,admin_id) VALUES(%s,%s,%s,%s,%s,%s,%s)""",
+                          (name, series['category_id'], city_id, series_id,
+                           b.get('poster_url') or '', b.get('description') or '', current_user()['id']))
+        return ok({'show_id': show_id}, msg='巡演站点已添加')
+    except (TypeError, ValueError):
+        return fail('城市信息不正确')
+    except Exception as e:
+        return fail('添加站点失败：%s' % e)
+
+
+@admin_bp.route('/admin/series/<int:series_id>/stations/<int:show_id>/delete', methods=['POST'])
+@require_login(role='admin')
+def delete_series_station(series_id, show_id):
+    try:
+        station = q("SELECT show_id FROM show_item WHERE show_id=%s AND series_id=%s",
+                    (show_id, series_id), one=True)
+        if not station:
+            return fail('巡演站点不存在')
+        execute("DELETE FROM show_item WHERE show_id=%s AND series_id=%s", (show_id, series_id))
+        return ok(msg='巡演站点及其场次已删除')
+    except pymysql.err.IntegrityError:
+        return fail('删除失败：该站点已有订单，为保留销售数据不可删除')
 
 
 @admin_bp.route('/admin/uploads/poster', methods=['POST'])

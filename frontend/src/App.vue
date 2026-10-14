@@ -7,6 +7,7 @@
           <el-menu-item index="/series">演出巡演</el-menu-item>
           <template v-if="store.isAdmin">
             <el-menu-item index="/admin/shows">演出管理</el-menu-item>
+            <el-menu-item index="/admin/series">巡演管理</el-menu-item>
             <el-menu-item index="/admin/stats">销售统计</el-menu-item>
           </template>
           <template v-else-if="store.isLogin">
