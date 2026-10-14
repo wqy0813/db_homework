@@ -4,7 +4,7 @@ from datetime import date
 from flask import Blueprint, request
 
 from db import q
-from .helpers import ok, fail, require_login
+from .helpers import HIDDEN_CATEGORY_ID, ok, fail, require_login
 
 stats_bp = Blueprint('api_stats', __name__)
 
@@ -36,9 +36,9 @@ def stats():
                 JOIN show_session se ON se.session_id=o.session_id
                 JOIN show_item s ON s.show_id=se.show_id
                 JOIN category cat ON cat.category_id=s.category_id
-                WHERE o.order_status=2 AND o.pay_time BETWEEN %s AND %s
+                WHERE cat.category_id<>%s AND o.order_status=2 AND o.pay_time BETWEEN %s AND %s
                 GROUP BY cat.category_id, cat.category_name ORDER BY amount DESC""",
-             (start, end_full))
+             (HIDDEN_CATEGORY_ID, start, end_full))
     cities = q("""SELECT c.city_name AS name,
                          SUM(o.ticket_count) AS tickets, SUM(o.total_amount) AS amount
                   FROM ticket_order o
@@ -54,9 +54,9 @@ def stats():
                JOIN show_session se ON se.session_id=o.session_id
                JOIN show_item s ON s.show_id=se.show_id
                JOIN city c ON c.city_id=s.city_id
-               WHERE o.order_status=2 AND o.pay_time BETWEEN %s AND %s
+               WHERE s.category_id<>%s AND o.order_status=2 AND o.pay_time BETWEEN %s AND %s
                GROUP BY s.show_id, s.show_name, c.city_name
-               ORDER BY tickets DESC LIMIT 10""", (start, end_full))
+               ORDER BY tickets DESC LIMIT 10""", (HIDDEN_CATEGORY_ID, start, end_full))
     total = q("""SELECT COUNT(*) AS orders, COALESCE(SUM(ticket_count),0) AS tickets,
                         COALESCE(SUM(total_amount),0) AS amount
                  FROM ticket_order WHERE order_status=2 AND pay_time BETWEEN %s AND %s""",

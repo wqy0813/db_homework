@@ -4,7 +4,8 @@ from flask import Blueprint, request
 
 from db import q
 from posters import resolve_poster
-from .helpers import ok
+from .helpers import HIDDEN_CATEGORY_ID, ok
+from .session_status import refresh_sale_statuses
 
 shows_bp = Blueprint('api_shows', __name__)
 
@@ -33,18 +34,20 @@ def _poster_row(row):
 @shows_bp.route('/dicts')
 def dicts():
     cities = [_row(r) for r in q("SELECT * FROM city ORDER BY city_id")]
-    cats = [_row(r) for r in q("SELECT * FROM category ORDER BY category_id")]
+    cats = [_row(r) for r in q("SELECT * FROM category WHERE category_id<>%s ORDER BY category_id",
+                               (HIDDEN_CATEGORY_ID,))]
     return ok({'cities': cities, 'categories': cats})
 
 
 @shows_bp.route('/shows')
 def shows():
+    refresh_sale_statuses()
     city_id = request.args.get('city_id', type=int)
     cat_id = request.args.get('category_id', type=int)
     status = request.args.get('status', type=int)
     keyword = (request.args.get('keyword') or '').strip()
-    sql = "SELECT * FROM v_show_list WHERE 1=1"
-    args = []
+    sql = "SELECT * FROM v_show_list WHERE category_id<>%s"
+    args = [HIDDEN_CATEGORY_ID]
     if city_id:
         sql += " AND city_id=%s"; args.append(city_id)
     if cat_id:
@@ -67,9 +70,10 @@ def show_detail(show_id):
                 JOIN city c ON c.city_id=s.city_id
                 JOIN category cat ON cat.category_id=s.category_id
                 LEFT JOIN show_series ser ON ser.series_id=s.series_id
-                WHERE s.show_id=%s""", (show_id,), one=True)
+                WHERE s.show_id=%s AND s.category_id<>%s""", (show_id, HIDDEN_CATEGORY_ID), one=True)
     if not show:
         return ok({'show': None, 'sessions': [], 'images': [], 'tiers': {}})
+    refresh_sale_statuses(show_id)
     show['poster_url'] = resolve_poster(
         show.get('series_name') or show['show_name'], show['category_id'],
         show.get('poster_url'), show.get('main_artist'))
@@ -110,6 +114,7 @@ def show_detail(show_id):
 @shows_bp.route('/series')
 def series_list():
     """巡演列表（首页按巡演聚合展示）。"""
+    refresh_sale_statuses()
     city_id = request.args.get('city_id', type=int)
     cat_id = request.args.get('category_id', type=int)
     status = request.args.get('status', type=int)
@@ -137,9 +142,9 @@ def series_list():
         JOIN show_item sh ON sh.series_id=ser.series_id
         LEFT JOIN show_session se ON se.show_id=sh.show_id
         LEFT JOIN v_show_list vl ON vl.show_id=sh.show_id
-        WHERE 1=1
+        WHERE ser.category_id<>%s
     """
-    args = []
+    args = [HIDDEN_CATEGORY_ID]
     if city_id:
         sql += " AND EXISTS (SELECT 1 FROM show_item x WHERE x.series_id=ser.series_id AND x.city_id=%s)"
         args.append(city_id)
@@ -160,9 +165,10 @@ def series_list():
 @shows_bp.route('/series/<int:series_id>')
 def series_detail(series_id):
     """巡演详情：基本信息 + 各城市站（每站含场次日期、价格区间）。"""
+    refresh_sale_statuses()
     ser = q("""SELECT ser.*, cat.category_name
                FROM show_series ser JOIN category cat ON cat.category_id=ser.category_id
-               WHERE ser.series_id=%s""", (series_id,), one=True)
+               WHERE ser.series_id=%s AND ser.category_id<>%s""", (series_id, HIDDEN_CATEGORY_ID), one=True)
     if not ser:
         return ok({'series': None, 'stations': []})
     stations = q("""
