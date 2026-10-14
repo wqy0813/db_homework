@@ -1,7 +1,7 @@
 <template>
   <h2>演出巡演</h2>
   <el-card shadow="never" class="filter">
-    <el-select v-model="cityId" placeholder="全部城市" clearable @change="load" style="width:150px">
+    <el-select v-model="cityId" placeholder="全部城市" clearable style="width:150px">
       <el-option v-for="c in cities" :key="c.city_id" :label="c.city_name" :value="c.city_id" />
     </el-select>
     <el-select v-model="catId" placeholder="全部类型" clearable style="width:150px">
@@ -12,9 +12,10 @@
     </el-select>
     <el-input v-model="keyword" placeholder="搜索巡演/艺人" clearable @keyup.enter="load" style="width:220px" />
     <el-button type="danger" @click="load">筛选</el-button>
+    <el-button @click="resetFilters">清空</el-button>
   </el-card>
 
-  <template v-if="!cityId">
+  <template v-if="!appliedCityId">
     <h2>巡演</h2>
     <div class="grid" v-loading="loading">
       <el-card v-for="s in series" :key="s.group_name || s.series_id" shadow="hover" class="series-card" body-style="padding:0"
@@ -38,7 +39,7 @@
     </div>
   </template>
 
-  <h2 style="margin-top:30px">{{ cityId ? `城市筛选结果：${selectedCityName}` : '单场演出' }}</h2>
+  <h2 v-if="!appliedCityId" style="margin-top:30px">单场演出</h2>
   <div class="grid" v-loading="loadingShows">
     <el-card v-for="s in visibleShows" :key="s.show_id" shadow="hover" class="series-card" body-style="padding:0"
              @click="$router.push('/shows/'+s.show_id)">
@@ -56,12 +57,12 @@
       </div>
     </el-card>
     <el-empty v-if="!loadingShows && visibleShows.length===0"
-              :description="cityId ? '该城市暂无符合条件的演出' : '暂无其他单场演出'" style="grid-column:1/-1" />
+              :description="appliedCityId ? '该城市暂无符合条件的演出' : '暂无其他单场演出'" style="grid-column:1/-1" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 
@@ -74,15 +75,12 @@ const visibleShows = ref([])
 const cities = ref([])
 const cats = ref([])
 const cityId = ref('')
+const appliedCityId = ref('')
 const catId = ref('')
 const statusId = ref('')
 const keyword = ref('')
 const loading = ref(false)
 const loadingShows = ref(false)
-const selectedCityName = computed(() =>
-  cities.value.find(c => String(c.city_id) === String(cityId.value))?.city_name || '所选城市'
-)
-
 const tagType = (cat) => ({ 1: 'danger', 2: 'warning', 3: 'success', 5: 'info', 6: 'primary', 7: 'warning' }[cat] || 'info')
 const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 
@@ -91,15 +89,21 @@ async function load() {
   loadingShows.value = true
   try {
     const params = {}
-    if (cityId.value) params.city_id = cityId.value
-    if (catId.value) params.category_id = catId.value
-    if (statusId.value) params.status = statusId.value
-    if (keyword.value) params.keyword = keyword.value
+    const filters = {
+      city_id: cityId.value,
+      category_id: catId.value,
+      status: statusId.value,
+      keyword: keyword.value.trim()
+    }
+    if (filters.city_id) params.city_id = filters.city_id
+    if (filters.category_id) params.category_id = filters.category_id
+    if (filters.status) params.status = filters.status
+    if (filters.keyword) params.keyword = filters.keyword
     const showsRequest = api.get('/shows', { params })
-    if (cityId.value) {
+    if (filters.city_id) {
       // 城市筛选展示该城市的站点演出本身，不再展示命中的巡演合集。
-      series.value = []
       const s = await showsRequest
+      series.value = []
       visibleShows.value = s.data.list || []
     } else {
       const [r, s] = await Promise.all([api.get('/series', { params }), showsRequest])
@@ -107,7 +111,16 @@ async function load() {
       // 未选择城市时保留“巡演 + 独立单场演出”的分类展示。
       visibleShows.value = (s.data.list || []).filter(x => !x.is_tour_station)
     }
+    appliedCityId.value = filters.city_id
   } finally { loading.value = false; loadingShows.value = false }
+}
+
+function resetFilters() {
+  cityId.value = ''
+  catId.value = ''
+  statusId.value = ''
+  keyword.value = ''
+  load()
 }
 
 async function loadDicts() {
