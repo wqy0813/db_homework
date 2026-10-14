@@ -20,7 +20,7 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
-from session_schedule import SOLD_OUT, bucket_for_index, sale_start_for, show_day_for_status  # noqa: E402
+from session_schedule import ENDED, SOLD_OUT, bucket_for_index, sale_start_for, show_day_for_status  # noqa: E402
 
 random.seed(7)
 
@@ -154,7 +154,10 @@ def main():
             continue
         vid = venue_of_city[cid]
         status = bucket_for_index(sess_cnt, TARGET_SESSIONS)
-        show_day = show_day_for_status(status, today, random)
+        # Spread ended sessions across the full year so their 30-day sale windows
+        # can sustain the 1,000,000-ticket history target.
+        show_day = (today - timedelta(days=random.randint(1, 365)) if status == ENDED
+                    else show_day_for_status(status, today, random))
         show_dt = datetime.combine(show_day, dtime(19, 30))
         sale_dt = sale_start_for(show_dt)
         cur.execute("""INSERT INTO show_session(show_id,venue_id,show_time,sale_start,sale_status)
