@@ -96,7 +96,7 @@ async function doLogin() {
   try {
     const r = await store.login(role.value, username.value.trim(), password.value)
     ElMessage.success(r.msg)
-    router.push(role.value === 'admin' ? '/admin/shows' : '/series')
+    router.push('/series')
   } catch (e) {
     // 拦截器已提示
   } finally {

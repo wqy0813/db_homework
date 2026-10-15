@@ -31,7 +31,7 @@
     <h3 style="margin-top:24px">各城市站</h3>
     <div class="station-list" v-loading="loading">
       <el-card v-for="st in data.stations" :key="st.show_id" shadow="hover" class="station-item"
-               @click="openInNewTab('/shows/' + st.show_id, { from: 'series' })">
+               @click="openStation(st.show_id)">
         <div class="station-head">
           <b>📍 {{ st.city_name }}</b>
           <el-tag v-if="st.show_status" :type="statusTagType(st.show_status)" size="small">
@@ -61,22 +61,26 @@ import { STATUS_NAMES } from '../store'
 
 const route = useRoute()
 const router = useRouter()
-
-// 城市站 → 详情也在新标签页打开，对比多个站时方便
-function openInNewTab(path, query) {
-  const url = router.resolve({ path, query }).href
-  window.open(url, '_blank')
-}
 const loading = ref(false)
 const data = ref({ series: null, stations: [] })
 
 const tagType = (cat) => ({ 1: 'danger', 2: 'warning', 3: 'success', 5: 'info', 6: 'primary', 7: 'warning' }[cat] || 'info')
 const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 
+function openStation(showId) {
+  const query = route.query.name
+    ? { from_group: route.query.name }
+    : { from_series: String(route.params.id) }
+  const href = router.resolve({ path: `/shows/${showId}`, query }).href
+  window.open(href, '_blank')
+}
+
 async function load() {
   loading.value = true
   try {
-    const r = await api.get('/series/' + route.params.id)
+    const r = route.query.name
+      ? await api.get('/series/group', { params: { name: route.query.name } })
+      : await api.get('/series/' + route.params.id)
     data.value = r.data
     // 把巡演名写进浏览器标签标题，多标签浏览时分得清
     if (r.data.series) document.title = `${r.data.series.series_name} - 演出票务系统`

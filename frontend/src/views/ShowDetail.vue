@@ -115,7 +115,7 @@
       </template>
 
       <el-alert v-else type="info" :closable="false" style="margin-top:10px">
-        <router-link to="/login">登录</router-link> 后即可购票
+        <router-link :to="{ path: '/login', query: { intent: 'login' } }">登录</router-link> 后即可购票
       </el-alert>
     </el-card>
   </div>
@@ -135,6 +135,9 @@ import AttendeeDialog from '../components/AttendeeDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
+const backPath = computed(() => route.query.from_group
+  ? { path: '/series/group', query: { name: route.query.from_group } }
+  : route.query.from_series ? `/series/${route.query.from_series}` : '/series')
 const store = useStore()
 const data = ref({ show: null, sessions: [], images: [], tiers: {}, summary: {} })
 const loading = ref(false)
@@ -153,15 +156,16 @@ const idTypeName = (t) => ID_TYPE[t]
 const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 const fmt = (s) => s ? s.replace('T', ' ').slice(0, 16) : ''
 
-// 返回目标按来路决定：从巡演页点单场演出进来回巡演列表，
-// 从城市站列表进来回城市站列表；直接输入网址时按 series_id 兜底。
-const backText = computed(() => '返回巡演列表')
+// 新标签模式下关闭当前标签回到来源；站点场次在同标签访问时回到对应站点列表。
+const backText = computed(() => route.query.from_group || route.query.from_series
+  ? '站点列表'
+  : '演出巡演')
 // 智能返回：本标签是新开的（无内部历史）→ 直接关闭标签回到原列表标签；
 // 本标签内部跳转过 → 浏览器后退。close 失败（如用户手动新开）时兜底回列表。
 function goBack() {
   if (window.history.length > 1) return router.back()
   window.close()
-  setTimeout(() => { if (!window.closed) router.push('/series') }, 200)
+  setTimeout(() => { if (!window.closed) router.push(backPath.value) }, 200)
 }
 
 async function load() {

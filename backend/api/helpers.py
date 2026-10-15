@@ -5,6 +5,8 @@ from flask import session, jsonify, request
 
 from db import verify_password, q
 
+HIDDEN_CATEGORY_ID = 4
+
 
 def ok(data=None, **extra):
     resp = {'code': 0, 'msg': 'ok'}
