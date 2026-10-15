@@ -15,8 +15,7 @@
     </el-select>
     <el-input v-model="keyword" placeholder="搜索巡演/艺人" clearable @keyup.enter="load" style="width:220px" />
     <el-button type="danger" @click="load">筛选</el-button>
-    <el-button link @click="resetFilters">清空</el-button>
-    <span class="muted" style="margin-left:auto;align-self:center">修改条件后点击「筛选」或在搜索框按回车查询</span>
+    <el-button type="success" @click="resetFilters">清空</el-button>
   </el-card>
 
   <template v-if="!appliedCityId">
