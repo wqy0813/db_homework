@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """订单与购票接口：我的订单、购票（核心事务）。"""
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 import uuid
 
 import pymysql
@@ -12,25 +13,101 @@ from .helpers import ok, fail, require_login, current_user
 orders_bp = Blueprint('api_orders', __name__)
 
 
+def _serialize_order_row(row):
+    result = dict(row)
+    for key, value in result.items():
+        if isinstance(value, datetime):
+            result[key] = value.isoformat(sep=' ')
+        elif isinstance(value, date):
+            result[key] = value.isoformat()
+        elif isinstance(value, Decimal):
+            result[key] = float(value)
+    return result
+
+
+def _mask_id_number(value):
+    value = str(value or '')
+    if len(value) <= 4:
+        return '*' * len(value)
+    return '*' * (len(value) - 4) + value[-4:]
+
+
 @orders_bp.route('/orders')
 @require_login(role='user')
 def list_orders():
     uid = current_user()['id']
-    orders = q("""SELECT * FROM v_order_detail
-                  WHERE order_id IN (SELECT order_id FROM ticket_order WHERE user_id=%s)
-                  ORDER BY create_time DESC""", (uid,))
-    items = q("""SELECT oi.order_id, oi.unit_price, a.attendee_name, a.id_type, a.id_no
-                 FROM order_item oi JOIN attendee a ON a.attendee_id=oi.attendee_id
-                 WHERE oi.order_id IN (SELECT order_id FROM ticket_order WHERE user_id=%s)
-                 ORDER BY oi.item_id""", (uid,))
-    items_by_order = {}
-    for it in items:
-        it['unit_price'] = float(it['unit_price'])
-        items_by_order.setdefault(it['order_id'], []).append(it)
-    for o in orders:
-        o['total_amount'] = float(o['total_amount'])
-        o['items'] = items_by_order.get(o['order_id'], [])
-    return ok({'list': orders})
+    page = request.args.get('page', 1, type=int)
+    page_size = request.args.get('page_size', 10, type=int)
+    keyword = (request.args.get('keyword') or '').strip()[:100]
+    if page is None or page < 1:
+        return fail('页码必须大于 0')
+    if page_size not in (10, 20, 50):
+        return fail('每页条数只支持 10、20 或 50')
+
+    where = 'o.user_id=%s'
+    args = [uid]
+    if keyword:
+        where += ' AND (o.order_no LIKE %s OR s.show_name LIKE %s)'
+        pattern = '%' + keyword + '%'
+        args.extend((pattern, pattern))
+
+    count = q("""SELECT COUNT(*) AS total
+                 FROM ticket_order o
+                 JOIN show_session se ON se.session_id=o.session_id
+                 JOIN show_item s ON s.show_id=se.show_id
+                 WHERE """ + where, args, one=True)
+    total = int(count['total'] or 0)
+    offset = (page - 1) * page_size
+    orders = q("""SELECT o.order_id, o.order_no, o.ticket_count, o.total_amount,
+                        o.order_status, o.create_time, o.pay_time,
+                        s.show_name, v.venue_name, c.city_name, se.show_time
+                 FROM ticket_order o
+                 JOIN show_session se ON se.session_id=o.session_id
+                 JOIN show_item s ON s.show_id=se.show_id
+                 JOIN venue v ON v.venue_id=se.venue_id
+                 JOIN city c ON c.city_id=v.city_id
+                 WHERE """ + where + """
+                 ORDER BY o.create_time DESC, o.order_id DESC
+                 LIMIT %s OFFSET %s""", args + [page_size, offset])
+    return ok({'list': [_serialize_order_row(row) for row in orders],
+               'total': total, 'page': page, 'page_size': page_size})
+
+
+@orders_bp.route('/orders/<int:order_id>')
+@require_login(role='user')
+def order_detail(order_id):
+    uid = current_user()['id']
+    order = q("""SELECT o.order_id, o.order_no, o.ticket_count, o.total_amount,
+                        o.order_status, o.create_time, o.pay_time,
+                        s.show_name, se.show_time, v.venue_name, c.city_name,
+                        t.tier_name, t.price AS tier_price,
+                        addr.receiver_name, addr.phone, addr.address_detail
+                 FROM ticket_order o
+                 JOIN show_session se ON se.session_id=o.session_id
+                 JOIN show_item s ON s.show_id=se.show_id
+                 JOIN venue v ON v.venue_id=se.venue_id
+                 JOIN city c ON c.city_id=v.city_id
+                 JOIN ticket_tier t ON t.tier_id=o.tier_id
+                 JOIN shipping_address addr ON addr.address_id=o.address_id
+                 WHERE o.order_id=%s AND o.user_id=%s""", (order_id, uid), one=True)
+    if not order:
+        return fail('订单不存在')
+
+    items = q("""SELECT a.attendee_name, a.id_type, a.id_no, oi.unit_price
+                 FROM order_item oi
+                 JOIN attendee a ON a.attendee_id=oi.attendee_id
+                 WHERE oi.order_id=%s ORDER BY oi.item_id""", (order_id,))
+    safe_items = []
+    for item in items:
+        safe_items.append({
+            'attendee_name': item['attendee_name'],
+            'id_type': item['id_type'],
+            'masked_id_no': _mask_id_number(item['id_no']),
+            'unit_price': float(item['unit_price']),
+        })
+    order['total_amount'] = float(order['total_amount'])
+    order['tier_price'] = float(order['tier_price'])
+    return ok({'order': _serialize_order_row(order), 'items': safe_items})
 
 
 class BuyError(Exception):

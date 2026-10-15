@@ -1,5 +1,5 @@
 <template>
-  <el-button link @click="goBack">← 返回{{ backText }}</el-button>
+  <el-button link @click="goBack">← {{ backText }}</el-button>
   <div v-if="data.show" v-loading="loading">
     <el-card shadow="never" class="head">
       <div class="head-inner">
@@ -135,6 +135,10 @@ import AttendeeDialog from '../components/AttendeeDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
+const fromSeries = computed(() => Boolean(route.query.from_series || route.query.from_group))
+const backPath = computed(() => route.query.from_group
+  ? { path: '/series/group', query: { name: route.query.from_group } }
+  : route.query.from_series ? `/series/${route.query.from_series}` : '/series')
 const store = useStore()
 const data = ref({ show: null, sessions: [], images: [], tiers: {}, summary: {} })
 const loading = ref(false)
@@ -155,13 +159,13 @@ const fmt = (s) => s ? s.replace('T', ' ').slice(0, 16) : ''
 
 // 返回目标按来路决定：从巡演页点单场演出进来回巡演列表，
 // 从城市站列表进来回城市站列表；直接输入网址时按 series_id 兜底。
-const backText = computed(() => '返回巡演列表')
+const backText = computed(() => fromSeries.value ? '返回站点列表' : '返回演出巡演')
 // 智能返回：本标签是新开的（无内部历史）→ 直接关闭标签回到原列表标签；
 // 本标签内部跳转过 → 浏览器后退。close 失败（如用户手动新开）时兜底回列表。
 function goBack() {
   if (window.history.length > 1) return router.back()
   window.close()
-  setTimeout(() => { if (!window.closed) router.push('/series') }, 200)
+  setTimeout(() => { if (!window.closed) router.push(backPath.value) }, 200)
 }
 
 async function load() {

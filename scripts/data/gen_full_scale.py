@@ -141,7 +141,7 @@ def main():
         if key not in show_cache:
             cur.execute("""INSERT INTO show_item(show_name,category_id,city_id,poster_url,description,admin_id)
                            VALUES(%s,%s,%s,%s,%s,1)""",
-                        (f'{ip}·{cname}站', cat, cid, '/img/full/p.jpg', f'{ip}{cname}站，满规模压测演出。'))
+                        (f'{ip}·{cname}站', cat, cid, '/img/full/p.jpg', f'{ip}{cname}站。'))
             sid = cur.lastrowid
             cur.executemany("INSERT INTO show_image(show_id,image_url,sort_no) VALUES(%s,%s,%s)",
                             [(sid, f'/img/full/{sid}_{k}.jpg', k) for k in (1, 2)])
