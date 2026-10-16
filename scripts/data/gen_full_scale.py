@@ -21,10 +21,35 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from posters import collected_poster  # noqa: E402
 from demo_batch import cleanup_batch, demo_users, demo_addresses  # noqa: E402
 from session_schedule import ENDED, SOLD_OUT, bucket_for_index, sale_start_for, show_day_for_status  # noqa: E402
 
 random.seed(7)
+
+
+def poster_for_ip(ip, category_id):
+    """Return the collected poster for a generated IP; never silently use an unrelated image."""
+    poster = collected_poster(ip, category_id, artist=ip)
+    if not poster:
+        raise RuntimeError(
+            f'满规模生成器缺少海报映射：category={category_id}, IP={ip}。'
+            '请先在 poster_collect/*/sources.csv 增加对应真实海报，或从生成词库中移除该 IP。'
+        )
+    return poster
+
+
+def validate_poster_pool():
+    """Fail fast if any generated IP has no real collected poster."""
+    missing = []
+    for category_id, ips in IPS.items():
+        for ip in ips:
+            if not collected_poster(ip, category_id, artist=ip):
+                missing.append((category_id, ip))
+    if missing:
+        detail = ', '.join(f'{cat}:{ip}' for cat, ip in missing)
+        raise RuntimeError('满规模生成器存在未映射海报的 IP：' + detail)
+
 
 TARGET_SESSIONS = 1000
 TARGET_TICKETS = 1_000_000
@@ -45,7 +70,7 @@ MORE_CITIES = [
 IPS = {
     1: ['周杰伦', '五月天', '陈奕迅', '林俊杰', '邓紫棋', '薛之谦', '李荣浩', '华晨宇',
         '张杰', '毛不易', '刘德华', '王菲', '蔡依林', '梁静茹', '张学友', '谢霆锋',
-        '王力宏', '陶喆', '周深', '李宇春', '张靓颖', '萧敬腾', '方大同', '吴青峰',
+        '王力宏', '陶喆', '周深', '李宇春', '张靓颖', '萧敬腾', 'Taylor Swift', '吴青峰',
         '时代少年团', '黎明', '郭富城', '周笔畅', '刘宇宁', '谭咏麟'],
     2: ['茶馆', '雷雨', '暗恋桃花源', '白鹿原', '戏台', '窝头会馆', '大宅门',
         '甄嬛传话剧', '如梦之梦', '宝岛一村', '歌剧魅影', '猫', '巴黎圣母院', '西贡小姐'],
@@ -77,14 +102,14 @@ def rname():
 
 
 def main():
+    validate_poster_pool()
     batch_id = uuid.uuid4().hex[:8]
     t0 = time.time()
     conn = pymysql.connect(autocommit=False, **DB_CONFIG)
     cur = conn.cursor()
 
     print('[1/5] 清理旧满规模数据 ...')
-    cur.execute("SELECT venue_id FROM venue WHERE venue_name LIKE '%（满规模）%'")
-    cleanup_batch(cur, 'F', 'f', poster_like='/img/full/%')
+    cleanup_batch(cur, 'F', 'f', venue_like='%（满规模）%')
     cur.execute("""DELETE FROM venue WHERE venue_name LIKE '%（满规模）%'
                    AND NOT EXISTS (SELECT 1 FROM show_session se WHERE se.venue_id=venue.venue_id)""")
     conn.commit()
@@ -126,9 +151,25 @@ def main():
 
     print('[4/5] 演出 / 场次 / 票档（约 %d 场次）...' % TARGET_SESSIONS)
     today = date.today()
+    now = datetime.now()
     show_cache = {}          # (ip, city_id) -> show_id
-    cur.execute("SELECT show_name,city_id FROM show_item WHERE poster_url LIKE '/img/full/%'")
-    preserved_shows = {(name.rsplit('·', 1)[0], cid) for name, cid in cur.fetchall()}
+    # 如果未来有人在专用满规模场馆上建立了普通订单，cleanup_batch 会保留该演出；
+    # 这里同步跳过对应的 (IP, 城市) 键，避免重新生成重复站点。
+    cur.execute("""SELECT DISTINCT s.show_name, s.city_id
+                   FROM show_item s
+                   WHERE EXISTS (
+                       SELECT 1 FROM show_session se
+                       JOIN venue v ON v.venue_id=se.venue_id
+                       WHERE se.show_id=s.show_id AND v.venue_name LIKE '%（满规模）%')
+                     AND EXISTS (
+                       SELECT 1 FROM ticket_order o
+                       JOIN show_session se ON se.session_id=o.session_id
+                       WHERE se.show_id=s.show_id AND o.order_no NOT LIKE 'F%')""")
+    preserved_shows = {
+        (name.rsplit('·', 1)[0], cid)
+        for name, cid in cur.fetchall()
+        if '·' in name
+    }
     tiers_mem = []           # 票档内存
     sold_out_sessions = set()
     sess_cnt = 0
@@ -141,9 +182,10 @@ def main():
         if key in preserved_shows:
             continue
         if key not in show_cache:
+            poster_url = poster_for_ip(ip, cat)
             cur.execute("""INSERT INTO show_item(show_name,category_id,city_id,poster_url,description,admin_id)
                            VALUES(%s,%s,%s,%s,%s,1)""",
-                        (f'{ip}·{cname}站', cat, cid, '/img/full/p.jpg', f'{ip}{cname}站。'))
+                        (f'{ip}·{cname}站', cat, cid, poster_url, f'{ip}{cname}站。'))
             sid = cur.lastrowid
             generated_show_ids.append(sid)
             show_cache[key] = sid
@@ -214,6 +256,40 @@ def main():
         conn.commit()
         orders_batch.clear(); att_batch.clear(); req_batch.clear()
 
+    # 售罄场次必须由真实订单把每个票档填满，不能只把 sold_seats 直接改成 total。
+    # 这些场次都在未来 1~20 天开演，因此 sale_start 到今天存在有效售票窗口。
+    today_end = now
+    for tier in tiers_mem:
+        if tier['sid'] not in sold_out_sessions:
+            continue
+        remaining = tier['total'] - tier['sold']
+        latest = min(today_end, tier['show'] - timedelta(seconds=1))
+        if tier['sale'] > latest:
+            raise RuntimeError(
+                f'售罄场次没有有效历史售票窗口：tier_id={tier["tid"]}, '
+                f'sale_start={tier["sale"]}, latest={latest}'
+            )
+        while remaining > 0:
+            k = min(remaining, random.choice([1, 2, 2, 3, 4]))
+            uid = random.choice(fusers)
+            total_delta = int((latest - tier['sale']).total_seconds())
+            pay = tier['sale'] + timedelta(seconds=random.randint(0, total_delta))
+            order_counter += 1
+            ono = 'F%s%012d' % (batch_id, order_counter)
+            amt = tier['price'] * k
+            orders_batch.append(
+                (ono, uid, tier['sid'], tier['tid'], addr_of[uid], k, amt, 2, pay, pay)
+            )
+            for _ in range(k):
+                att_counter += 1
+                att_batch.append((uid, rname(), 'F%s%012d' % (batch_id, att_counter)))
+            req_batch.append((uid, tier['sid'], tier['tid'], k, 1, None, pay))
+            tier['sold'] += k
+            tickets_done += k
+            remaining -= k
+            if len(orders_batch) >= 800:
+                flush()
+
     for day_off in range(365, 0, -1):
         if tickets_done >= TARGET_TICKETS:
             break
@@ -230,8 +306,12 @@ def main():
         while made < day_target and tickets_done < TARGET_TICKETS and attempts < day_target * 8:
             attempts += 1
             t = random.choice(cand)   # 允许同一票档当天被多次选中
-            k = random.choice([1, 2, 2, 3, 4])
-            if t['total'] - t['sold'] < k:
+            k = min(
+                random.choice([1, 2, 2, 3, 4]),
+                t['total'] - t['sold'],
+                TARGET_TICKETS - tickets_done,
+            )
+            if k <= 0:
                 continue
             uid = random.choice(fusers)
             day_start = datetime.combine(d, dtime(9, 0))
@@ -254,12 +334,44 @@ def main():
             t['sold'] += k; made += k; tickets_done += k
             if len(orders_batch) >= 800:
                 flush()
+    # 日配额使用随机权重后，理论上可能略低于目标；最后补齐差额，确保批次严格达到 TARGET_TICKETS。
+    if tickets_done < TARGET_TICKETS:
+        today_end = now
+        topup_cand = [
+            t for t in tiers_mem
+            if t['sold'] < t['total']
+            and t['sale'] <= min(today_end, t['show'] - timedelta(seconds=1))
+        ]
+        while tickets_done < TARGET_TICKETS and topup_cand:
+            topup_cand = [t for t in topup_cand if t['sold'] < t['total']]
+            if not topup_cand:
+                break
+            t = random.choice(topup_cand)
+            k = min(TARGET_TICKETS - tickets_done, t['total'] - t['sold'], random.choice([1, 2, 2, 3, 4]))
+            latest = min(today_end, t['show'] - timedelta(seconds=1))
+            earliest = max(now - timedelta(days=365), t['sale'])
+            if earliest > latest:
+                topup_cand.remove(t)
+                continue
+            pay = earliest if earliest == latest else earliest + timedelta(
+                seconds=random.randint(0, int((latest - earliest).total_seconds())))
+            uid = random.choice(fusers)
+            order_counter += 1
+            ono = 'F%s%012d' % (batch_id, order_counter)
+            amt = t['price'] * k
+            orders_batch.append((ono, uid, t['sid'], t['tid'],
+                                 addr_of[uid], k, amt, 2, pay, pay))
+            for _ in range(k):
+                att_counter += 1
+                att_batch.append((uid, rname(), 'F%s%012d' % (batch_id, att_counter)))
+            req_batch.append((uid, t['sid'], t['tid'], k, 1, None, pay))
+            t['sold'] += k
+            tickets_done += k
+    if tickets_done != TARGET_TICKETS:
+        raise RuntimeError(f'历史订单未达到目标：{tickets_done}/{TARGET_TICKETS}')
     flush()
 
     print('      回写余票 / 汇总 / 状态 ...')
-    for tier in tiers_mem:
-        if tier['sid'] in sold_out_sessions:
-            tier['sold'] = tier['total']
     cur.executemany("UPDATE ticket_tier SET sold_seats=%s WHERE tier_id=%s",
                     [(t['sold'], t['tid']) for t in tiers_mem])
     # 销售汇总按全部已支付订单权威重建（TRUNCATE 保证重复执行不重复累加）
@@ -277,6 +389,30 @@ def main():
 
     from group_series import main as group_series_main
     group_series_main(generated_show_ids, include_unmapped=True)
+
+    # group_series 负责建立巡演关系；这里把本批次新建 series 的海报同步为同一张真实海报，
+    # 保证“同一巡演所有城市站共用同一张海报”，且数据库本身不再保存 /img/full/p.jpg 这类遗留路径。
+    conn.commit()
+    if generated_show_ids:
+        marks = ','.join(['%s'] * len(generated_show_ids))
+        cur.execute(f"""
+            SELECT DISTINCT ser.series_id, ser.series_name, ser.main_artist, ser.category_id
+            FROM show_item sh
+            JOIN show_series ser ON ser.series_id=sh.series_id
+            WHERE sh.show_id IN ({marks})
+        """, generated_show_ids)
+        generated_series = cur.fetchall()
+        for series_id, series_name, main_artist, category_id in generated_series:
+            poster_url = collected_poster(
+                series_name, category_id, artist=main_artist)
+            if not poster_url:
+                raise RuntimeError(
+                    f"生成的巡演没有真实海报映射：series_id={series_id}, "
+                    f"series_name={series_name}"
+                )
+            cur.execute("UPDATE show_series SET poster_url=%s WHERE series_id=%s",
+                        (poster_url, series_id))
+        conn.commit()
 
     def cnt(sql):
         cur.execute(sql); return cur.fetchone()[0]

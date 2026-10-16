@@ -2,11 +2,12 @@
 """修复测试数据异常脚本 (成员 1 任务 4)。
 
 修复内容：
-1. 修复付款时间早于开售时间的场次：将场次开售时间调整至首笔订单付款之前，保留所有真实订单、金额与付款时间。
-2. 修复已到开售时间但仍标为预售的场次，更新为正确状态。
-3. 清理演出介绍中的“满规模压测”等测试文案，替换为正式演示简介。
-4. 检查并补全演出缺失的 series_id 巡演归属。
-5. 核对修复前后的订单总数、已售票数与总销售额，保证业务数据不丢失、不重复。
+1. 修复付款时间早于开售时间的场次：将场次开售时间调整至首笔订单付款之前，保留历史付款记录。
+2. 修复旧票档总票数超过场馆容量，并把虚假的 sold_seats 校准为真实已支付订单数量。
+3. 修复明确旧 B 批次的付款时间晚于开演记录。
+4. 修复已到开售时间但仍标为预售的场次，更新为正确状态。
+5. 清理演出介绍中的“满规模压测”等测试文案，替换为正式演示简介。
+6. 检查并补全演出缺失的 series_id 巡演归属，并核对销售汇总与订单指标。
 
 用法：
   python scripts/data/fix_test_data.py --dry-run   # 仅预览将要修改的记录
@@ -20,6 +21,7 @@ import os
 import sys
 from datetime import timedelta
 
+import math
 import pymysql
 from pymysql.cursors import DictCursor
 
@@ -98,6 +100,81 @@ def check_and_fix(dry_run: bool = False):
         print(f"  发现 {len(over_capacity)} 场演出总票数超过场馆容量：")
         for row in over_capacity:
             print(f"    - 场次 {row['session_id']} ({row['show_name']}): 场馆 {row['venue_name']} 容量 {row['capacity']}, 已分配 {row['allocated']}")
+            cur.execute("""
+                SELECT t.tier_id, t.total_seats,
+                       COALESCE(SUM(CASE WHEN o.order_status=2 THEN o.ticket_count ELSE 0 END),0) AS actual_sold
+                FROM ticket_tier t
+                LEFT JOIN ticket_order o
+                  ON o.tier_id=t.tier_id AND o.session_id=t.session_id
+                WHERE t.session_id=%s
+                GROUP BY t.tier_id,t.total_seats
+                ORDER BY t.tier_id
+            """, (row['session_id'],))
+            tiers = cur.fetchall()
+            actual_total = sum(int(t['actual_sold']) for t in tiers)
+            if actual_total > row['capacity']:
+                raise RuntimeError(
+                    f"场次 {row['session_id']} 的真实已售票 {actual_total} 已超过场馆容量 "
+                    f"{row['capacity']}，不能通过缩减票档安全修复。"
+                )
+
+            # 按原票档比例压缩总票数，保持价格档次和大致座位结构；
+            # 同时把 sold_seats 校准为真实已支付订单数量，避免旧脚本遗留的虚假售罄。
+            capacity = int(row['capacity'])
+            allocated = int(row['allocated'])
+            raw = [float(t['total_seats']) * capacity / allocated for t in tiers]
+            new_totals = [
+                max(50, int(math.ceil(float(t['actual_sold']) / 50.0)) * 50)
+                for t in tiers
+            ]
+            # 优先按比例取整到 50 张；不足/超出的部分再按原始比例调整。
+            for i, value in enumerate(raw):
+                new_totals[i] = max(new_totals[i], int(round(value / 50.0)) * 50)
+            while sum(new_totals) > capacity:
+                candidates = [
+                    i for i, t in enumerate(tiers)
+                    if new_totals[i] - max(50, int(math.ceil(float(t['actual_sold']) / 50.0)) * 50) >= 50
+                ]
+                if not candidates:
+                    raise RuntimeError(
+                        f"场次 {row['session_id']} 无法在容量 {capacity} 内保留已有销量。"
+                    )
+                i = max(candidates, key=lambda x: new_totals[x] - raw[x])
+                new_totals[i] -= 50
+            while sum(new_totals) < capacity:
+                i = max(range(len(tiers)), key=lambda x: raw[x] - new_totals[x])
+                new_totals[i] += 50
+
+            for t, new_total in zip(tiers, new_totals):
+                print(
+                    f"      票档 {t['tier_id']}: 总票 {t['total_seats']} -> {new_total}, "
+                    f"已售 {t['actual_sold']}"
+                )
+                if not dry_run:
+                    cur.execute(
+                        "UPDATE ticket_tier SET total_seats=%s,sold_seats=%s WHERE tier_id=%s",
+                        (new_total, int(t['actual_sold']), t['tier_id'])
+                    )
+
+    # -------------------------------------------------------------
+    # 2.5 旧批量数据中还存在少量“付款晚于开演”的记录。
+    # 只修复明确的 B 批次；把付款时间截到开演前 1 秒，不改变普通订单。
+    print("\n[检查项 2.5] B 批次付款时间晚于开演:")
+    cur.execute("""
+        SELECT o.order_id,o.order_no,o.pay_time,se.show_time
+        FROM ticket_order o
+        JOIN show_session se ON se.session_id=o.session_id
+        WHERE o.order_status=2 AND o.order_no LIKE 'B%%'
+          AND o.pay_time > se.show_time
+        ORDER BY o.order_id
+    """)
+    late_b = cur.fetchall()
+    print(f"  发现 {len(late_b)} 笔：")
+    for o in late_b:
+        new_pay = o['show_time'] - timedelta(seconds=1)
+        print(f"    - {o['order_no']}: {o['pay_time']} -> {new_pay}")
+        if not dry_run:
+            cur.execute("UPDATE ticket_order SET pay_time=%s WHERE order_id=%s", (new_pay,o['order_id']))
 
     # -------------------------------------------------------------
     # 3. 检查演出简介文案（清理“压测”字样）
@@ -119,7 +196,8 @@ def check_and_fix(dry_run: bool = False):
     # 4. 补全 series_id 归属
     # -------------------------------------------------------------
     print("\n[检查项 4] 补全未归属巡演的演出 (series_id IS NULL):")
-    from group_series import IP_KEYWORDS, CAT_POSTER
+    from group_series import IP_KEYWORDS
+    from posters import collected_poster
     cur.execute("SELECT series_id, series_name FROM show_series")
     series_cache = {s['series_name']: s['series_id'] for s in cur.fetchall()}
 
@@ -133,7 +211,7 @@ def check_and_fix(dry_run: bool = False):
                     if not dry_run:
                         cur.execute(
                             "INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description) VALUES(%s,%s,%s,%s,%s)",
-                            (series_name, cat, kw, CAT_POSTER.get(cat), series_name + '，全国巡演中。'))
+                            (series_name, cat, kw, collected_poster(series_name, cat, artist=kw), series_name + '，全国巡演中。'))
                         series_cache[series_name] = cur.lastrowid
                     else:
                         series_cache[series_name] = -1
@@ -153,6 +231,16 @@ def check_and_fix(dry_run: bool = False):
     print("\n[检查项 5] 刷新场次售票状态至符合当前时间:")
     from api.session_status import refresh_sale_statuses
     if not dry_run:
+        # 付款时间被调整后，直接依赖 UPDATE 触发器不会同步 sales_daily；
+        # 因此按全部已支付订单权威重建汇总。
+        cur.execute("TRUNCATE TABLE sales_daily")
+        cur.execute("""
+            INSERT INTO sales_daily(stat_date,order_count,ticket_count,total_amount)
+            SELECT DATE(pay_time),COUNT(*),SUM(ticket_count),SUM(total_amount)
+            FROM ticket_order
+            WHERE order_status=2 AND pay_time IS NOT NULL
+            GROUP BY DATE(pay_time)
+        """)
         # 先提交前序修改，释放 show_session 行锁，避免 refresh_sale_statuses 开独立连接更新相同行时锁等待超时
         conn.commit()
         refresh_sale_statuses()

@@ -10,6 +10,7 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from posters import collected_poster  # noqa: E402
 
 # (关键词, 规范巡演名, 类型id)
 IP_KEYWORDS = [
@@ -58,17 +59,6 @@ IP_KEYWORDS = [
     ('只此青绿', '舞剧《只此青绿》', 7),
 ]
 
-# 类型 -> 巡演海报（用已验证的真实图片）
-CAT_POSTER = {
-    1: '/static/img/concert1.jpg',
-    2: '/static/img/theater1.jpg',
-    3: '/static/img/basket1.jpg',
-    5: '/static/img/museum1.jpg',
-    6: '/static/img/piano1.jpg',
-    7: '/static/img/dance1.jpg',
-}
-
-
 def main(show_ids=None, include_unmapped=False):
     conn = pymysql.connect(cursorclass=pymysql.cursors.DictCursor, **DB_CONFIG)
     cur = conn.cursor()
@@ -94,10 +84,15 @@ def main(show_ids=None, include_unmapped=False):
         for r in rows:
             if kw in r['show_name'] and r['category_id'] == cat and r['show_id'] not in assigned:
                 if series_name not in series_cache:
+                    poster_url = collected_poster(series_name, cat, artist=kw)
+                    if poster_url is None:
+                        raise RuntimeError(
+                            f'系列缺少真实海报映射：category={cat}, keyword={kw}, series={series_name}'
+                        )
                     cur.execute(
                         "INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description) "
                         "VALUES(%s,%s,%s,%s,%s)",
-                        (series_name, cat, kw, CAT_POSTER.get(cat), series_name + '，全国巡演中。'))
+                        (series_name, cat, kw, poster_url, series_name + '，全国巡演中。'))
                     series_id = cur.lastrowid
                     series_cache[series_name] = series_id
                     created += 1
@@ -111,9 +106,10 @@ def main(show_ids=None, include_unmapped=False):
                 continue
             name = row['show_name'].rsplit('·', 1)[0].strip()
             if name not in series_cache:
+                poster_url = collected_poster(name, row['category_id'], artist=name) or row['poster_url']
                 cur.execute("""INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description)
                                VALUES(%s,%s,%s,%s,%s)""",
-                            (name, row['category_id'], name, row['poster_url'], name + '，欢迎观演。'))
+                            (name, row['category_id'], name, poster_url, name + '，欢迎观演。'))
                 series_cache[name] = cur.lastrowid
                 created += 1
             cur.execute('UPDATE show_item SET series_id=%s WHERE show_id=%s',

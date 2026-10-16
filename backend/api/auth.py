@@ -72,7 +72,7 @@ def register():
         return fail('该用户名或手机号已被注册')
     except pymysql.err.DataError:
         return fail('注册失败：数据库 password_hash 字段长度不足，'
-                    '请联系管理员按 docs/注册功能数据库升级说明.md 执行升级')
+                    '请联系管理员按 sql/migrations/20261016_integrate_members.sql 执行数据库升级')
     except Exception as e:
         return fail('注册失败：%s' % e)
     return ok({'user_id': uid}, msg='注册成功，请使用新账号登录')

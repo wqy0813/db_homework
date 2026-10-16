@@ -26,6 +26,7 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from posters import collected_poster  # noqa: E402
 from demo_batch import cleanup_batch, demo_users, demo_addresses  # noqa: E402
 from session_schedule import SOLD_OUT, bucket_for_index, sale_start_for, show_day_for_status  # noqa: E402
 
@@ -82,16 +83,6 @@ TIER_PRICES = {
     7: [('VIP 880', 880), ('一等 680', 680), ('二等 480', 480), ('三等 280', 280)],
 }
 
-# 各类型对应的真实海报/介绍图（本地 static/img 下的真实照片）
-CAT_IMAGES = {
-    1: ['/static/img/concert1.jpg', '/static/img/concert2.jpg', '/static/img/concert3.jpg'],
-    2: ['/static/img/theater1.jpg', '/static/img/theater2.jpg'],
-    3: ['/static/img/basket1.jpg', '/static/img/basket2.jpg'],
-    5: ['/static/img/museum1.jpg', '/static/img/theater2.jpg'],
-    6: ['/static/img/piano1.jpg', '/static/img/piano2.jpg'],
-    7: ['/static/img/dance1.jpg', '/static/img/dance2.jpg'],
-}
-
 SURNAMES = list('王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭')
 GIVEN = list('伟芳娜敏静丽强磊军洋勇艳杰娟涛明超秀兰霞平刚桂英华玉梅浩宇欣怡子涵雨桐')
 STREETS = ['人民路', '解放大道', '中山路', '建设路', '和平街', '文化巷', '学府路', '滨江道',
@@ -116,7 +107,7 @@ def main():
     # 只替换明确的演示批次；已有关联普通订单的演出、注册账号和地址均保留。
     # ---------- 0. 清理上一批批量数据（可重复执行） ----------
     print('清理旧的批量数据 ...')
-    cleanup_batch(cur, 'B', 'u', poster_urls=tuple({images[0] for images in CAT_IMAGES.values()}))
+    cleanup_batch(cur, 'B', 'u')
     conn.commit()
 
     # ---------- 1. 城市、场馆 ----------
@@ -200,8 +191,12 @@ def main():
             session_index += session_counts[seq]
             continue
         vlist = venues_by_city.get(cid) or random.choice(list(venues_by_city.values()))
-        imgs = CAT_IMAGES[cat]
-        poster = imgs[0]
+        poster = collected_poster(name, cat)
+        if poster is None:
+            raise RuntimeError(
+                f'批量演示数据缺少真实海报映射：category={cat}, show={name}。'
+                '请先补充 poster_collect/*/sources.csv。'
+            )
         cur.execute("""INSERT INTO show_item(show_name,category_id,city_id,poster_url,description,admin_id)
                        VALUES(%s,%s,%s,%s,%s,1)""",
                     (name, cat, cid, poster, f'{name}，精彩呈现，欢迎购票。'))

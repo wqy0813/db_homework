@@ -15,6 +15,7 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from poster_assets import poster_assets_for  # noqa: E402
 
 DRY = '--dry' in sys.argv
 
@@ -160,8 +161,10 @@ def main():
         cur.execute("UPDATE show_series SET series_name='CBA 职业篮球联赛', main_artist='CBA联赛' WHERE series_id=%s", (keep,))
         print('② CBA 系列已合并为 series_id=%s' % keep)
     else:
+        poster, _ = poster_assets_for('CBA 职业篮球联赛', 3, count=1)
         cur.execute("INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description) "
-                    "VALUES('CBA 职业篮球联赛',3,'CBA联赛','/static/img/basket1.jpg','CBA 职业篮球联赛。')")
+                    "VALUES(%s,3,%s,%s,%s)",
+                    ('CBA 职业篮球联赛', 'CBA联赛', poster, 'CBA 职业篮球联赛。'))
         keep = cur.lastrowid
         if cba_shows:
             for s in cba_shows:
@@ -186,9 +189,10 @@ def main():
         if exist:
             sid = exist['series_id']
         else:
+            poster, _ = poster_assets_for(series_name, 1, count=1, offset=len(artist_series))
             cur.execute("INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description) "
                         "VALUES(%s,1,%s,%s,%s)",
-                        (series_name, artist, '/static/img/concert1.jpg', series_name + '。'))
+                        (series_name, artist, poster, series_name + '。'))
             sid = cur.lastrowid
         for s in matched:
             cur.execute("UPDATE show_item SET series_id=%s WHERE show_id=%s", (sid, s['show_id']))

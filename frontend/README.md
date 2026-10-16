@@ -45,5 +45,5 @@ frontend/
 
 ## 页面与接口对应
 
-见后端文档 `docs/API接口说明.md`。购票、限购、不超卖、统计图表等逻辑全部在后端 `/api`，
+后端接口实现位于 `backend/api/`。购票、限购、不超卖、统计图表等逻辑全部在后端 `/api`，
 前端只负责展示与交互；登录态用 Cookie Session（axios `withCredentials:true`）。

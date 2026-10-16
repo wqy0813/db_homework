@@ -12,13 +12,9 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from poster_assets import poster_assets_for  # noqa: E402
 
 DRY = '--dry' in sys.argv
-
-CAT_POSTER = {
-    1: '/static/img/concert1.jpg', 2: '/static/img/theater1.jpg', 3: '/static/img/basket1.jpg',
-    5: '/static/img/museum1.jpg', 6: '/static/img/piano1.jpg', 7: '/static/img/dance1.jpg',
-}
 
 
 def main():
@@ -66,9 +62,10 @@ def main():
         if exist:
             sid = exist['series_id']
         else:
+            poster, _ = poster_assets_for(series_name, cat, count=1, offset=created)
             cur.execute("INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description) "
                         "VALUES(%s,%s,%s,%s,%s)",
-                        (series_name, cat, g, CAT_POSTER.get(cat), series_name + '。'))
+                        (series_name, cat, g, poster, series_name + '。'))
             sid = cur.lastrowid
             created += 1
         for s in shows:

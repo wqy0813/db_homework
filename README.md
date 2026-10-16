@@ -86,14 +86,12 @@ db_homework/
 ├─ sql/
 │  ├─ schema/                # ddl.sql、views.sql：表、约束、视图和触发器
 │  ├─ seed/                  # seed_data.sql：完整基础演示数据
-│  ├─ archive/               # 历史阶段迁移和补充种子脚本
-│  ├─ tests/                 # queries.sql、test_cases.sql：查询示例和数据库测试
-│  └─ backups/               # 大型数据库备份，不参与初始化
+│  ├─ migrations/            # 已有数据库的增量升级 SQL
+│  └─ tests/                 # queries.sql、test_cases.sql：查询示例和数据库测试
 ├─ scripts/
 │  ├─ data/                  # 数据生成、清洗、巡演聚合和媒体维护
-│  ├─ tests/                 # API、数据一致性和状态分布测试
-│  ├─ performance/           # 查询性能和 EXPLAIN 检查
-│  └─ archive/               # 一次性探查和旧素材工具
+│  ├─ tests/                 # API、海报和状态规则测试
+│  └─ performance/           # 查询性能和 EXPLAIN 检查
 ├─ test_tools/
 │  ├─ ui_test.js             # Puppeteer UI 测试
 │  ├─ shots/                 # UI 测试截图
@@ -187,9 +185,9 @@ SELECT COUNT(*) FROM ticket_sales.show_session;
 SELECT COUNT(*) FROM ticket_sales.ticket_order;
 ```
 
-当前仓库中的数据库可能已经由数据生成脚本扩充，数量不一定等于基础 seed 数据的数量。`sql/schema/views.sql` 通常不需要单独执行，因为 `ddl.sql` 已包含 3 个业务视图；如果视图被删除或需要单独重建，再执行该文件。
+当前仓库中的数据库可能已经由数据生成脚本扩充，数量不一定等于基础 seed 数据的数量。`sql/schema/views.sql` 通常不需要单独执行，因为 `ddl.sql` 已包含 3 个业务视图；如果已有数据库需要单独刷新视图，再执行该文件。
 
-本轮旧库升级使用 `sql/migrations/20261016_integrate_members.sql`，具体步骤见 [组员部署使用手册](docs/组员部署使用手册.md)。`sql/archive/` 保留历史迁移，不要顺序执行全部归档脚本。新数据库只需执行上面的 DDL 和完整 seed。
+已有数据库的本轮增量升级使用 `sql/migrations/20261016_integrate_members.sql`，具体步骤见 [组员部署使用手册](docs/组员部署使用手册.md)。新数据库只需执行上面的 DDL 和完整 seed。
 
 ### 数据库连接配置
 
@@ -291,7 +289,7 @@ http://127.0.0.1:5000/app/
 
 ## REST API 摘要
 
-基础地址：`http://127.0.0.1:5000/api`。成功响应通常为 `{ "code": 0, "msg": "ok", "data": ... }`；未登录为 `401`，无权限为 `403`，其他业务错误由 `msg` 说明。完整字段和请求示例见 [`docs/API接口说明.md`](docs/API接口说明.md)。
+基础地址：`http://127.0.0.1:5000/api`。成功响应通常为 `{ "code": 0, "msg": "ok", "data": ... }`；未登录为 `401`，无权限为 `403`，其他业务错误由 `msg` 说明。各模块接口实现位于 `backend/api/`。
 
 | 模块 | 方法和路径 |
 | --- | --- |
@@ -322,12 +320,10 @@ http://127.0.0.1:5000/app/
 | --- | --- | --- |
 | `sql/schema/ddl.sql` | 重建数据库、表、视图、触发器和约束 | 是，删除并重建 `ticket_sales` |
 | `sql/seed/seed_data.sql` | 清空业务表后导入基础演示数据 | 是，会清空已有业务数据 |
-| `sql/schema/views.sql` | 独立创建业务视图 | 仅修改视图 |
+| `sql/schema/views.sql` | 独立刷新业务视图 | 仅修改视图 |
+| `sql/migrations/20261016_integrate_members.sql` | 已有数据库的本轮增量升级 | 会修改字段、视图、触发器和定时事件，并修正已知 seed 归属 |
 | `sql/tests/queries.sql` | 常用查询、购票事务和统计 SQL 示例 | 视语句而定，默认不建议直接全量执行 |
 | `sql/tests/test_cases.sql` | 约束、触发器、购票和统计测试 | 含写入、失败用例和清理语句，执行前阅读 |
-| `sql/archive/phase4_series.sql` | 旧 schema 的巡演/IP 结构升级 | 仅用于对应旧库 |
-| `sql/archive/phase5_session_status.sql` | 旧库场次状态升级 | 会更新场次状态和开售时间 |
-| `sql/archive/phase4_seed_series.sql` | 历史单独导入系列数据的脚本；内容已合并进当前 `seed_data.sql` | 仅用于追溯，不要在新库重复执行 |
 
 数据库当前包含城市、类型、管理员、用户、场馆、巡演、演出、图片、场次、票档、收货信息、购票人、订单、订单明细、购票请求和销售日汇总等表；具体字段和外键以 `sql/schema/ddl.sql` 为准。
 
@@ -342,6 +338,8 @@ python scripts/data/gen_more_data.py
 ```
 
 脚本会清理自己生成的批量数据（订单号以 `B` 开头、批量用户和 `show_id > 8` 的演出），保留基础演示账号和核心演出，然后生成额外城市、场馆、演出、用户、历史订单和购票请求。重复运行会重建该批数据。
+生成的海报和介绍图从仓库内 `poster_collect/A~D/` 选择，存入 `/posters/<组>/<文件名>` 地址；请与项目代码一起保留该目录，不依赖个人机器上的 `static/img/` 图片。
+系列分组和数据归一化脚本新建的系列也遵循同一海报来源。
 
 ### 大规模数据
 
@@ -350,6 +348,7 @@ python scripts/data/gen_full_scale.py
 ```
 
 脚本面向性能实验，会生成约 100 个城市、10 万用户、约 1000 个场次和约 100 万张历史售票数据。数据量大、执行时间长，并会显著增加数据库文件大小；只应在专用测试库执行。
+满规模生成器的海报统一从 `poster_collect/*/sources.csv` 的真实本地海报映射选择；每个生成 IP 没有真实海报映射时直接报错，不使用占位图。重复运行按专用“（满规模）”场馆识别并清理旧批次，避免依赖海报路径或描述文字误删正常演出。
 
 ### 性能检查
 
@@ -381,13 +380,13 @@ npm install
 node ui_test.js
 ```
 
-测试前需要先启动网站。截图和 JSON 结果默认保存在 `test_tools/shots/`、`test_tools/ui_results.json` 等文件中。
+测试前需要先启动网站。截图和 JSON 结果默认保存在本机的 `test_tools/shots/` 等忽略目录中。
 
 ### SQL 测试
 
 在测试数据库中阅读并执行 `sql/tests/test_cases.sql`。该文件包含购票事务、不超卖、限购、触发器、状态和 CHECK 约束验证，其中部分用例故意执行失败语句来确认数据库拒绝非法数据。
 
-项目中的测试文档和实测报告位于 `docs/`，包括 [`docs/系统功能测试手册.md`](docs/系统功能测试手册.md)、[`docs/新版功能测试说明书_实测填写版.md`](docs/新版功能测试说明书_实测填写版.md) 和 [`docs/功能测试执行报告.md`](docs/功能测试执行报告.md)。
+最终整合、回归和数据验收结论见 [`docs/最终整合与提交审查报告_2026-10-16.md`](docs/最终整合与提交审查报告_2026-10-16.md)。
 
 ## 常见问题
 
@@ -450,11 +449,11 @@ Get-NetTCPConnection -LocalPort 5000 -State Listen
 
 ## 相关文档
 
-- [API 接口说明](docs/API接口说明.md)
 - [组员部署使用手册](docs/组员部署使用手册.md)
 - [数据库设计正文](docs/演出门票销售系统_数据库设计对应内容.md)
 - [数据库模型](docs/database_models.md)
-- [文件用途与冗余盘点](docs/项目文件用途与冗余盘点.md)
+- [数据字典（紧凑版）](docs/演出门票销售系统_数据字典_紧凑版.docx)
+- [最终整合与提交审查报告](docs/最终整合与提交审查报告_2026-10-16.md)
 - [前端说明](frontend/README.md)
 
 ## 来源与核对日期

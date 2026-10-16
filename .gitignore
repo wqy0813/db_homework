@@ -19,6 +19,7 @@ test_tools/shots/
 reset_log.txt
 sql/backups/
 docs/test-results/
+backup_deleted_files_20261016/
 
 # ===== 编辑器/系统杂项 =====
 .vscode/
