@@ -21,6 +21,13 @@ class CollectedPosterTests(unittest.TestCase):
             ('teamLab无界·台州站', 5, '/posters/A/series_054_poster.jpg'),
             ('久石让音乐会·武汉站', 6, '/posters/B/series_059_poster.jpeg'),
             ('猫·吉林站', 2, '/posters/C/series_105_poster.jpg'),
+            ('音乐剧《猫》Cats', 2, '/posters/C/series_105_poster.jpg'),
+            ('中超联赛 主场赛事', 3, '/posters/D/csl_football.jpg'),
+            ('NBA 中国赛', 3, '/posters/D/nba_china.jpg'),
+            ('国际乒联世界巡回赛', 3, '/posters/D/table_tennis.jpg'),
+            ('维也纳皇家交响乐团新年音乐会', 6, '/posters/C/series_097_poster.jpg'),
+            ('国家大剧院交响音乐会', 6, '/posters/B/series_120_poster.jpg'),
+            ('Taylor Swift 时代巡回演唱会', 1, '/posters/D/series_094_poster.jpg'),
             ('威尼斯商人·武汉站', 2, '/posters/B/show_030_poster.jpg'),
         ]
         for name, category, url in cases:
@@ -36,6 +43,15 @@ class CollectedPosterTests(unittest.TestCase):
     def test_custom_posters_are_preserved(self):
         for url in ['/static/img/uploads/custom.jpg', 'https://example.com/poster.jpg']:
             self.assertEqual(resolve_poster('话剧《雷雨》', 2, url), url)
+
+    def test_sport_aliases_match_their_collected_images_only_in_sports(self):
+        for name, filename in [('中超', 'csl_football.jpg'),
+                               ('NBA', 'nba_china.jpg'),
+                               ('乒联', 'table_tennis.jpg')]:
+            with self.subTest(name=name):
+                self.assertEqual(collected_poster(name + '·上海站', 3),
+                                 '/posters/D/' + filename)
+                self.assertIsNone(collected_poster(name, 6))
 
     def test_removed_legacy_local_paths_are_not_returned(self):
         for url in ['/static/img/concert1.jpg', '/static/img/posters/1.jpg', '/img/full/p.jpg']:

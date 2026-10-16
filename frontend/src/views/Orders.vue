@@ -101,7 +101,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import api from '../api'
 import { ORDER_STATUS, ID_TYPE } from '../store'
 
@@ -115,21 +115,25 @@ const total = ref(0)
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const orderDetail = ref(null)
+let listRequest = 0
+let detailRequest = 0
 
 const orderTagType = (status) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[status])
 const formatDateTime = (value) => value ? String(value).replace('T', ' ').slice(0, 16) : '—'
 const formatMoney = (value) => Number(value || 0).toFixed(2)
 
 async function load() {
+  const requestId = ++listRequest
   loading.value = true
   try {
     const response = await api.get('/orders', {
       params: { page: page.value, page_size: pageSize.value, keyword: searchKeyword.value },
     })
+    if (requestId !== listRequest) return
     orders.value = response.data.list || []
     total.value = Number(response.data.total || 0)
   } finally {
-    loading.value = false
+    if (requestId === listRequest) loading.value = false
   }
 }
 
@@ -158,18 +162,21 @@ function changePageSize(value) {
 }
 
 async function openDetail(row) {
+  const requestId = ++detailRequest
   detailVisible.value = true
   detailLoading.value = true
   orderDetail.value = null
   try {
     const response = await api.get(`/orders/${row.order_id}`)
+    if (requestId !== detailRequest) return
     orderDetail.value = { ...response.data.order, items: response.data.items || [] }
   } finally {
-    detailLoading.value = false
+    if (requestId === detailRequest) detailLoading.value = false
   }
 }
 
 onMounted(load)
+onBeforeUnmount(() => { listRequest++; detailRequest++ })
 </script>
 
 <style scoped>

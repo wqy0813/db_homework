@@ -15,8 +15,9 @@
         <div class="intro-main">
           <h2>{{ data.series.series_name }}</h2>
           <p v-if="data.series.main_artist" class="muted">🎤 {{ data.series.main_artist }}</p>
-          <p class="muted">📍 巡演范围：{{ data.series.city_count || data.stations.length }} 城 · {{ data.stations.length }} 站</p>
-          <p class="price">¥{{ Math.round(data.series.min_price||0) }} - ¥{{ Math.round(data.series.max_price||0) }}</p>
+          <p class="muted">📍 巡演范围：{{ data.series.city_count || new Set(data.stations.map(st => st.city_id)).size }} 城 · {{ data.stations.length }} 站</p>
+          <p v-if="priceRange" class="price">¥{{ Math.round(priceRange.min) }} - ¥{{ Math.round(priceRange.max) }}</p>
+          <p v-else class="muted">价格待定</p>
         </div>
       </div>
       <!-- 巡演介绍：保留换行；没介绍时显示提示 -->
@@ -54,7 +55,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { STATUS_NAMES } from '../store'
@@ -63,6 +64,13 @@ const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const data = ref({ series: null, stations: [] })
+const priceRange = computed(() => {
+  const priced = data.value.stations.filter(st => st.min_price != null && st.max_price != null)
+  return priced.length ? {
+    min: Math.min(...priced.map(st => Number(st.min_price))),
+    max: Math.max(...priced.map(st => Number(st.max_price)))
+  } : null
+})
 
 const tagType = (cat) => ({ 1: 'danger', 2: 'warning', 3: 'success', 5: 'info', 6: 'primary', 7: 'warning' }[cat] || 'info')
 const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
@@ -70,9 +78,9 @@ const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info'
 function openStation(showId) {
   const query = route.query.name
     ? { from_group: route.query.name }
-    : { from_series: String(route.params.id || '') }
-  const url = router.resolve({ path: `/shows/${showId}`, query }).href
-  window.open(url, '_blank')
+    : { from_series: String(route.params.id) }
+  const href = router.resolve({ path: `/shows/${showId}`, query }).href
+  window.open(href, '_blank')
 }
 
 async function load() {

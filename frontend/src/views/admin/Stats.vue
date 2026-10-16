@@ -50,7 +50,10 @@ import api from '../../api'
 // echarts 由 index.html 通过 <script src="./assets/echarts.min.js"> 全局提供
 const echarts = window.echarts
 
-function iso(d){ return new Date(d).toISOString().slice(0,10) }
+function iso(value) {
+  const date = new Date(value)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 const start = ref(iso(Date.now() - 29 * 86400000))
 const end = ref(iso(Date.now()))
 const total = reactive({ orders: 0, tickets: 0, amount: 0 })
@@ -60,6 +63,7 @@ const isEmpty = computed(() => total.orders === 0)
 const dailyRef = ref(null), catRef = ref(null), cityRef = ref(null)
 const charts = {}
 let disposed = false
+let requestSequence = 0
 
 function getChart(key, el) {
   if (!el) return null
@@ -73,10 +77,12 @@ function getChart(key, el) {
 }
 
 async function load() {
+  const requestId = ++requestSequence
   let r
   try {
     r = await api.get('/admin/stats', { params: { start: start.value, end: end.value } })
   } catch (e) { return }
+  if (disposed || requestId !== requestSequence) return
   const d = r.data
   Object.assign(total, d.total)
   top.value = d.top
@@ -87,11 +93,11 @@ async function load() {
   }
   // 等两帧确保布局完成再渲染，避免容器宽度为 0
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (disposed) return
+    if (disposed || requestId !== requestSequence) return
     renderDaily(d.daily); renderCat(d.cats); renderCity(d.cities)
     // 渲染后再 resize 一次，确保拿到真实尺寸
     setTimeout(() => {
-      if (disposed) return
+      if (disposed || requestId !== requestSequence) return
       Object.values(charts).forEach(c => c && c.resize())
     }, 100)
   }))

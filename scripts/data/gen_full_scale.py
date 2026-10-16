@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 满规模压测数据生成器 —— 按题目给定数据量灌入接近目标的数据：
   - 城市 100+ 个；
@@ -7,12 +7,13 @@
   - 场次状态目标分布：45% 已结束、15% 售罄、10% 售票中、30% 预售中；
   - 过去 365 天约 100 万张已售票（~40 万订单、100 万购票人），
     周末销量更高，自动维护余票/限购/金额/sales_daily。
-可重复执行（按标记清理：f% 用户、F% 订单、poster '/img/full/' 演出）。
+可重复执行：仅替换无普通订单关联的本生成批次，复用演示账号与地址，保留真实注册用户。
 运行：python scripts/data/gen_full_scale.py
 """
 import os
 import random
 import sys
+import uuid
 import time
 from datetime import datetime, timedelta, date, time as dtime
 
@@ -20,6 +21,7 @@ import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from demo_batch import cleanup_batch, demo_users, demo_addresses  # noqa: E402
 from session_schedule import ENDED, SOLD_OUT, bucket_for_index, sale_start_for, show_day_for_status  # noqa: E402
 
 random.seed(7)
@@ -75,23 +77,16 @@ def rname():
 
 
 def main():
+    batch_id = uuid.uuid4().hex[:8]
     t0 = time.time()
     conn = pymysql.connect(autocommit=False, **DB_CONFIG)
     cur = conn.cursor()
 
     print('[1/5] 清理旧满规模数据 ...')
     cur.execute("SELECT venue_id FROM venue WHERE venue_name LIKE '%（满规模）%'")
-    cur.execute("DELETE oi FROM order_item oi JOIN ticket_order o ON o.order_id=oi.order_id WHERE o.order_no LIKE 'F%'")
-    cur.execute("DELETE FROM ticket_order WHERE order_no LIKE 'F%'")
-    cur.execute("DELETE FROM purchase_request WHERE user_id IN (SELECT user_id FROM app_user WHERE username LIKE 'f%')")
-    cur.execute("DELETE FROM attendee WHERE user_id IN (SELECT user_id FROM app_user WHERE username LIKE 'f%')")
-    cur.execute("DELETE FROM shipping_address WHERE user_id IN (SELECT user_id FROM app_user WHERE username LIKE 'f%')")
-    cur.execute("DELETE FROM app_user WHERE username LIKE 'f%'")
-    cur.execute("DELETE FROM ticket_tier WHERE session_id IN (SELECT session_id FROM show_session WHERE show_id IN (SELECT show_id FROM show_item WHERE poster_url LIKE '/img/full/%'))")
-    cur.execute("DELETE FROM show_session WHERE show_id IN (SELECT show_id FROM show_item WHERE poster_url LIKE '/img/full/%')")
-    cur.execute("DELETE FROM show_image WHERE show_id IN (SELECT show_id FROM show_item WHERE poster_url LIKE '/img/full/%')")
-    cur.execute("DELETE FROM show_item WHERE poster_url LIKE '/img/full/%'")
-    cur.execute("DELETE FROM venue WHERE venue_name LIKE '%（满规模）%'")
+    cleanup_batch(cur, 'F', 'f', poster_like='/img/full/%')
+    cur.execute("""DELETE FROM venue WHERE venue_name LIKE '%（满规模）%'
+                   AND NOT EXISTS (SELECT 1 FROM show_session se WHERE se.venue_id=venue.venue_id)""")
     conn.commit()
 
     print('[2/5] 城市 / 场馆 ...')
@@ -111,40 +106,46 @@ def main():
                   f'136{i:08d}', f'f{i:06d}@example.com', 1)
                  for i in range(1, USER_TOTAL + 1)]
     for k in range(0, len(user_rows), 5000):
-        cur.executemany("""INSERT INTO app_user(username,password_hash,phone,email,status)
+        cur.executemany("""INSERT IGNORE INTO app_user(username,password_hash,phone,email,status)
                            VALUES(%s,%s,%s,%s,%s)""", user_rows[k:k + 5000])
     conn.commit()
-    cur.execute("SELECT user_id FROM app_user WHERE username LIKE 'f%'")
-    fusers = [r[0] for r in cur.fetchall()]
+    fusers = demo_users(cur, 'f')
+    if not fusers:
+        raise RuntimeError('没有可用的生成器演示账号，请使用全新初始化的演示库')
     print('      用户数 =', len(fusers))
     # 收货地址
     addr_rows = [(uid, rname(), f'13{random.randint(0,999999999):09d}',
                   f'{random.choice(cities)[1]}市测试路{random.randint(1,999)}号', 1) for uid in fusers]
+    existing_addresses = demo_addresses(cur, 'f')
+    addr_rows = [row for row in addr_rows if row[0] not in existing_addresses]
     for k in range(0, len(addr_rows), 5000):
         cur.executemany("""INSERT INTO shipping_address(user_id,receiver_name,phone,address_detail,is_default)
                            VALUES(%s,%s,%s,%s,%s)""", addr_rows[k:k + 5000])
     conn.commit()
-    cur.execute("SELECT user_id, address_id FROM shipping_address WHERE user_id IN (SELECT user_id FROM app_user WHERE username LIKE 'f%')")
-    addr_of = {uid: aid for uid, aid in cur.fetchall()}
+    addr_of = demo_addresses(cur, 'f')
 
     print('[4/5] 演出 / 场次 / 票档（约 %d 场次）...' % TARGET_SESSIONS)
     today = date.today()
     show_cache = {}          # (ip, city_id) -> show_id
+    cur.execute("SELECT show_name,city_id FROM show_item WHERE poster_url LIKE '/img/full/%'")
+    preserved_shows = {(name.rsplit('·', 1)[0], cid) for name, cid in cur.fetchall()}
     tiers_mem = []           # 票档内存
     sold_out_sessions = set()
     sess_cnt = 0
+    generated_show_ids = []
     while sess_cnt < TARGET_SESSIONS:
         cat = random.choices([1, 2, 3, 5, 6, 7], weights=[4, 2, 2, 2, 1, 1])[0]
         ip = random.choice(IPS[cat])
         cid, cname = random.choice(cities)
         key = (ip, cid)
+        if key in preserved_shows:
+            continue
         if key not in show_cache:
             cur.execute("""INSERT INTO show_item(show_name,category_id,city_id,poster_url,description,admin_id)
                            VALUES(%s,%s,%s,%s,%s,1)""",
                         (f'{ip}·{cname}站', cat, cid, '/img/full/p.jpg', f'{ip}{cname}站。'))
             sid = cur.lastrowid
-            cur.executemany("INSERT INTO show_image(show_id,image_url,sort_no) VALUES(%s,%s,%s)",
-                            [(sid, f'/img/full/{sid}_{k}.jpg', k) for k in (1, 2)])
+            generated_show_ids.append(sid)
             show_cache[key] = sid
             show_sess_count = 0
         sid = show_cache[key]
@@ -183,19 +184,22 @@ def main():
     def flush():
         if not orders_batch:
             return
-        # 购票人（每张票一位）；用 MAX(id) 回查本批真实自增 ID，避免 lastrowid 推算误差
-        cur.execute("SELECT COALESCE(MAX(attendee_id),0) FROM attendee"); att_base = cur.fetchone()[0]
+        # 通过本批次的唯一证件键回查，避免把并发新增的其他用户资料混入本批。
         cur.executemany("INSERT INTO attendee(user_id,attendee_name,id_type,id_no) VALUES(%s,%s,1,%s)",
                         att_batch)
-        cur.execute("SELECT attendee_id FROM attendee WHERE attendee_id>%s ORDER BY attendee_id", (att_base,))
-        att_ids = [r[0] for r in cur.fetchall()]
+        marks = ','.join(['(%s,1,%s)'] * len(att_batch))
+        args = [value for uid, _name, id_no in att_batch for value in (uid, id_no)]
+        cur.execute('SELECT user_id,id_no,attendee_id FROM attendee WHERE (user_id,id_type,id_no) IN (' + marks + ')', args)
+        attendee_ids = {(uid, id_no): aid for uid, id_no, aid in cur.fetchall()}
+        att_ids = [attendee_ids[(uid, id_no)] for uid, _name, id_no in att_batch]
         # 订单
-        cur.execute("SELECT COALESCE(MAX(order_id),0) FROM ticket_order"); ord_base = cur.fetchone()[0]
         cur.executemany("""INSERT INTO ticket_order(order_no,user_id,session_id,tier_id,address_id,
                                 ticket_count,total_amount,order_status,create_time,pay_time)
                            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", orders_batch)
-        cur.execute("SELECT order_id FROM ticket_order WHERE order_id>%s ORDER BY order_id", (ord_base,))
-        ord_ids = [r[0] for r in cur.fetchall()]
+        order_nos = [order[0] for order in orders_batch]
+        cur.execute('SELECT order_no,order_id FROM ticket_order WHERE order_no IN (' + ','.join(['%s'] * len(order_nos)) + ')', order_nos)
+        order_ids = dict(cur.fetchall())
+        ord_ids = [order_ids[order_no] for order_no in order_nos]
         # 明细：按订单顺序，每订单 k 张；购票人按本批插入顺序一一对应
         rows, ai = [], 0
         for oi, od in enumerate(orders_batch):
@@ -230,15 +234,22 @@ def main():
             if t['total'] - t['sold'] < k:
                 continue
             uid = random.choice(fusers)
-            pay = datetime.combine(d, dtime(random.randint(9, 22), random.randint(0, 59)))
+            day_start = datetime.combine(d, dtime(9, 0))
+            earliest = max(day_start, t['sale'])
+            latest = min(datetime.combine(d, dtime(22, 59, 59)), t['show'] - timedelta(seconds=1))
+            if earliest >= latest:
+                pay = earliest
+            else:
+                total_delta = int((latest - earliest).total_seconds())
+                pay = earliest + timedelta(seconds=random.randint(0, total_delta))
             order_counter += 1
-            ono = 'F%04d%06d' % (d.year % 100, order_counter)
+            ono = 'F%s%012d' % (batch_id, order_counter)
             amt = t['price'] * k
             od = (ono, uid, t['sid'], t['tid'], addr_of[uid], k, amt, 2, pay, pay)
             orders_batch.append(od)
             for _ in range(k):
                 att_counter += 1
-                att_batch.append((uid, rname(), 'FA%08d' % att_counter))
+                att_batch.append((uid, rname(), 'F%s%012d' % (batch_id, att_counter)))
             req_batch.append((uid, t['sid'], t['tid'], k, 1, None, pay))
             t['sold'] += k; made += k; tickets_done += k
             if len(orders_batch) >= 800:
@@ -263,6 +274,9 @@ def main():
                      AND EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id)
                      AND NOT EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
     conn.commit()
+
+    from group_series import main as group_series_main
+    group_series_main(generated_show_ids, include_unmapped=True)
 
     def cnt(sql):
         cur.execute(sql); return cur.fetchone()[0]

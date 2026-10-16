@@ -80,7 +80,8 @@ def order_detail(order_id):
     order = q("""SELECT o.order_id, o.order_no, o.ticket_count, o.total_amount,
                         o.order_status, o.create_time, o.pay_time,
                         s.show_name, se.show_time, v.venue_name, c.city_name,
-                        t.tier_name, t.price AS tier_price,
+                        t.tier_name,
+                        COALESCE((SELECT oi.unit_price FROM order_item oi WHERE oi.order_id=o.order_id LIMIT 1), t.price) AS tier_price,
                         addr.receiver_name, addr.phone, addr.address_detail
                  FROM ticket_order o
                  JOIN show_session se ON se.session_id=o.session_id
@@ -106,12 +107,36 @@ def order_detail(order_id):
             'unit_price': float(item['unit_price']),
         })
     order['total_amount'] = float(order['total_amount'])
-    order['tier_price'] = float(order['tier_price'])
+    if safe_items:
+        order['tier_price'] = safe_items[0]['unit_price']
+    else:
+        order['tier_price'] = float(order['tier_price'])
     return ok({'order': _serialize_order_row(order), 'items': safe_items})
 
 
 class BuyError(Exception):
     pass
+
+
+def _parse_ticket_count(value):
+    """严格校验购票张数：必须是 1 到 6 的整数，拒绝浮点数（如 1.5）、布尔值、非数字字符串。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        value = int(value)
+    elif isinstance(value, str):
+        val_str = value.strip()
+        if not val_str.isdigit():
+            return None
+        try:
+            value = int(val_str)
+        except ValueError:
+            return None
+    elif not isinstance(value, int):
+        return None
+    return value if 1 <= value <= 6 else None
 
 
 @orders_bp.route('/buy', methods=['POST'])
@@ -123,25 +148,28 @@ def buy():
         # 兼容表单提交
         body = {k: v for k, v in request.form.items()}
         body['attendee_ids'] = request.form.getlist('attendee_ids')
-    session_id = int(body.get('session_id') or 0)
-    tier_id = int(body.get('tier_id') or 0)
-    count = int(body.get('count') or 0)
-    address_id = int(body.get('address_id') or 0)
-    attendee_ids = [int(x) for x in (body.get('attendee_ids') or [])]
-    show_id = int(body.get('show_id') or 0)
+    try:
+        session_id = int(body.get('session_id') or 0)
+        tier_id = int(body.get('tier_id') or 0)
+        address_id = int(body.get('address_id') or 0)
+        show_id = int(body.get('show_id') or 0)
+        attendee_ids = [int(x) for x in (body.get('attendee_ids') or [])]
+    except (TypeError, ValueError):
+        return fail('请求参数格式不正确')
+    count = _parse_ticket_count(body.get('count'))
 
     def log_fail(reason):
         try:
             from db import execute
             execute("""INSERT INTO purchase_request(user_id,session_id,tier_id,ticket_count,result,fail_reason)
                        VALUES(%s,%s,%s,%s,0,%s)""",
-                    (uid, session_id or 0, tier_id or 0, count, reason))
+                    (uid, session_id or 0, tier_id or 0, count or 0, reason))
         except Exception:
             pass
 
-    if not (show_id and session_id and tier_id and address_id and 1 <= count <= 6):
-        log_fail('表单不完整')
-        return fail('请完整选择场次、票档、票数(1-6)和收货地址')
+    if count is None or not (show_id and session_id and tier_id and address_id):
+        log_fail('表单不完整或票数不正确')
+        return fail('请完整选择场次、票档、票数(1-6正整数)和收货地址')
     if len(attendee_ids) != count:
         log_fail('购票人数量与票数不一致')
         return fail('购票人数量必须与票数一致（每人限购 1 张）')
@@ -170,6 +198,8 @@ def buy():
                 raise BuyError('该场次已结束')
             if se['sale_status'] == 3:
                 raise BuyError('该场次已售罄')
+            if se['sale_status'] == 1 or se['sale_start'] > now:
+                raise BuyError('演出尚未开售（预售中）')
             raise BuyError('该场次当前暂未开放购票')
         if se['sale_start'] > now:
             raise BuyError('演出尚未开售（预售中）')
@@ -186,11 +216,11 @@ def buy():
             raise BuyError('该场次已售罄')
         if remain < count:
             raise BuyError('余票不足，购票失败')
-        cur.execute("SELECT 1 FROM shipping_address WHERE address_id=%s AND user_id=%s", (address_id, uid))
+        cur.execute("SELECT 1 FROM shipping_address WHERE address_id=%s AND user_id=%s LOCK IN SHARE MODE", (address_id, uid))
         if not cur.fetchone():
             raise BuyError('收货信息无效')
-        for aid in attendee_ids:
-            cur.execute("SELECT 1 FROM attendee WHERE attendee_id=%s AND user_id=%s", (aid, uid))
+        for aid in sorted(attendee_ids):
+            cur.execute("SELECT 1 FROM attendee WHERE attendee_id=%s AND user_id=%s LOCK IN SHARE MODE", (aid, uid))
             if not cur.fetchone():
                 raise BuyError('购票人信息无效')
         for aid in attendee_ids:

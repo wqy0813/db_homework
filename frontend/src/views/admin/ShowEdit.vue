@@ -28,6 +28,7 @@
             </el-upload>
             <el-input v-model="showForm.poster_url" placeholder="也可直接填写图片 URL" />
             <el-image v-if="showForm.poster_url" :src="showForm.poster_url" fit="cover" class="poster-preview" />
+            <div class="poster-tip muted">支持上传图片（jpg/png/webp等），或填写以 http://、https://、/static 开头的网络地址；不支持本地文件路径（如 C:\...）</div>
           </div>
         </el-form-item>
         <el-form-item label="介绍"><el-input v-model="showForm.description" type="textarea" style="width:420px" /></el-form-item>
@@ -87,16 +88,18 @@
     </el-card>
 
     <el-dialog v-model="editDialogVisible" title="修改场次" width="850px" :close-on-click-modal="false">
+      <el-alert v-if="editForm.has_orders" type="warning" :closable="false" style="margin-bottom:12px"
+                title="该场次已有售出订单，为保障观演权益不可修改场馆与开演时间；票档不可改名、不可删除，可调整后续售价及不低于已售数量的总票数。" />
       <el-form label-width="100px" @submit.prevent>
         <el-form-item label="场馆">
-          <el-select v-model="editForm.venue_id" style="width:100%">
+          <el-select v-model="editForm.venue_id" :disabled="editForm.has_orders" style="width:100%">
             <el-option v-for="v in data.venues" :key="v.venue_id" :value="v.venue_id"
                        :label="`${v.venue_name}（容量 ${v.capacity} 张）`" />
           </el-select>
         </el-form-item>
         <el-form-item label="开演时间">
           <el-date-picker v-model="editForm.show_time" type="datetime" value-format="YYYY-MM-DD HH:mm:ss"
-                          :disabled-date="disablePastDate" style="width:100%" />
+                          :disabled="editForm.has_orders" :disabled-date="disablePastDate" style="width:100%" />
         </el-form-item>
         <el-form-item label="开售时间">
           <span>{{ editSaleStartPreview || '选择开演时间后自动计算' }}</span>
@@ -113,21 +116,19 @@
         </el-table-column>
         <el-table-column label="票价（元）" width="175">
           <template #default="{row}">
-            <el-input-number v-model="row.price" :min="0.01" :precision="2"
-                             :disabled="Number(row.sold_seats) > 0" style="width:150px" />
+            <el-input-number v-model="row.price" :min="0.01" :precision="2" style="width:150px" />
           </template>
         </el-table-column>
         <el-table-column label="总票数（张）" width="185">
           <template #default="{row}">
-            <el-input-number v-model="row.total_seats" :min="Math.max(1, Number(row.sold_seats))"
-                             :disabled="Number(row.sold_seats) > 0" style="width:155px" />
+            <el-input-number v-model="row.total_seats" :min="Math.max(1, Number(row.sold_seats))" style="width:155px" />
           </template>
         </el-table-column>
         <el-table-column prop="sold_seats" label="已售数量" width="100" />
         <el-table-column label="提示" min-width="150">
           <template #default="{row}">
-            <el-tooltip v-if="Number(row.sold_seats) > 0" content="该票档已售不为 0" placement="top">
-              <el-tag type="info">该票档已售不为 0</el-tag>
+            <el-tooltip v-if="Number(row.sold_seats) > 0" content="已有订单：不可改名，可调整后续票价和总票数（不低于已售数量）" placement="top">
+              <el-tag type="warning">已售 {{ row.sold_seats }}（可改价/增票）</el-tag>
             </el-tooltip>
             <span v-else class="muted">可编辑</span>
           </template>
@@ -253,6 +254,9 @@ async function load() {
 }
 async function saveShow() {
   if (!showForm.show_name || !showForm.category_id || !showForm.city_id) return ElMessage.warning('请填写名称、类型和城市')
+  if (showForm.poster_url && (/^[a-zA-Z]:[\\/]/.test(showForm.poster_url) || showForm.poster_url.includes('\\'))) {
+    return ElMessage.warning('图片地址格式不正确：不能填写本地文件路径，请先点击「选择并上传」或填写网络地址')
+  }
   const r = await api.post('/admin/shows/' + route.params.id + '/update', { ...showForm })
   ElMessage.success(r.msg); await load()
 }
@@ -293,6 +297,7 @@ function openEditSession(session) {
     tier_id: tier.tier_id, tier_name: tier.tier_name, price: Number(tier.price),
     total_seats: Number(tier.total_seats), sold_seats: Number(tier.sold_seats)
   }))
+  editForm.has_orders = editForm.tiers.some(tier => Number(tier.sold_seats) > 0)
   editForm.new_tiers = []
   editForm.delete_tier_ids = []
   editDialogVisible.value = true
@@ -354,4 +359,5 @@ onMounted(load)
 .poster-editor { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .poster-editor .el-input { width: 300px; }
 .poster-preview { width: 42px; height: 42px; border-radius: 4px; }
+.poster-tip { font-size: 12px; color: #888; margin-top: 4px; width: 100%; }
 </style>

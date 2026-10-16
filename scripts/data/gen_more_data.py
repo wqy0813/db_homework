@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 批量演示数据生成器 —— 连接 ticket_sales 库，生成接近真实规模的演示数据：
   - 城市补到 35 个；
@@ -9,19 +9,24 @@
     分布在各城市/类型/日期，自动扣减余票、写订单明细（每人每场次1张）；
   - 购票请求日志（成功+失败）；
   - 重建销售日汇总 sales_daily、刷新场次售票状态。
-可重复执行：每次先清理上一批批量数据（订单号以 B 开头、user_id>5、show_id>8），
-           保留 seed 的 7 场核心演出与 5 个演示账号。
+可重复执行：仅替换未关联普通订单的 B 批次演出，复用演示账号与地址；
+           保留注册用户、管理员新增演出、普通订单及其关联资料。
 运行：python scripts/data/gen_more_data.py
 """
+import io
 import os
 import random
 import sys
+import uuid
 from datetime import datetime, timedelta, date, time
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import pymysql
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 from config import DB_CONFIG  # noqa: E402
+from demo_batch import cleanup_batch, demo_users, demo_addresses  # noqa: E402
 from session_schedule import SOLD_OUT, bucket_for_index, sale_start_for, show_day_for_status  # noqa: E402
 
 random.seed(42)
@@ -35,6 +40,11 @@ NEW_CITIES = ['苏州', '青岛', '厦门', '郑州', '济南', '沈阳', '大�
 
 SHOW_NAMES = [
     # 演唱会
+    ('周杰伦《嘉年华》世界巡回演唱会·上海站', 1),
+    ('周杰伦《嘉年华》世界巡回演唱会·广州站', 1),
+    ('周杰伦《嘉年华》世界巡回演唱会·深圳站', 1),
+    ('周杰伦《嘉年华》世界巡回演唱会·成都站', 1),
+    ('周杰伦《嘉年华》世界巡回演唱会·杭州站', 1),
     ('林俊杰《JJ20》世界巡回演唱会', 1), ('五月天《好好好想见到你》演唱会', 1),
     ('陈奕迅《Fear and Dreams》演唱会', 1), ('王菲《幻乐一场》演唱会', 1),
     ('薛之谦《天外来物》巡回演唱会', 1), ('邓紫棋《GLORIA》世界巡回演唱会', 1),
@@ -49,7 +59,7 @@ SHOW_NAMES = [
     # 体育
     ('中超联赛 主场赛事', 3), ('CBA 职业篮球联赛', 3), ('NBA 中国赛', 3),
     ('国际乒联世界巡回赛', 3), ('羽毛球大师赛', 3), ('网球公开赛', 3),
-    ('搏击争霸赛', 3),
+    ('搏击争霸赛', 3), ('排球超级联赛', 3),
     # 展览
     ('梵高《星夜》光影艺术展', 5), ('teamLab 无界美术馆', 5),
     ('故宫文物特展', 5), ('敦煌艺术大展', 5),
@@ -99,21 +109,14 @@ def rand_name():
 
 
 def main():
+    batch_id = uuid.uuid4().hex[:8]
     conn = pymysql.connect(autocommit=False, **DB_CONFIG)
     cur = conn.cursor()
 
+    # 只替换明确的演示批次；已有关联普通订单的演出、注册账号和地址均保留。
     # ---------- 0. 清理上一批批量数据（可重复执行） ----------
     print('清理旧的批量数据 ...')
-    cur.execute("DELETE oi FROM order_item oi JOIN ticket_order o ON o.order_id=oi.order_id WHERE o.order_no LIKE 'B%'")
-    cur.execute("DELETE FROM ticket_order WHERE order_no LIKE 'B%'")
-    cur.execute("DELETE FROM purchase_request WHERE user_id > 5")
-    cur.execute("DELETE FROM attendee WHERE user_id > 5")
-    cur.execute("DELETE FROM shipping_address WHERE user_id > 5")
-    cur.execute("DELETE FROM app_user WHERE user_id > 5")
-    cur.execute("DELETE FROM ticket_tier WHERE session_id IN (SELECT session_id FROM show_session WHERE show_id > 8)")
-    cur.execute("DELETE FROM show_session WHERE show_id > 8")
-    cur.execute("DELETE FROM show_image WHERE show_id > 8")
-    cur.execute("DELETE FROM show_item WHERE show_id > 8")
+    cleanup_batch(cur, 'B', 'u', poster_urls=tuple({images[0] for images in CAT_IMAGES.values()}))
     conn.commit()
 
     # ---------- 1. 城市、场馆 ----------
@@ -130,11 +133,11 @@ def main():
     # 已有场馆靠 (city_id,venue_name) 唯一去重
     cur.executemany("""INSERT IGNORE INTO venue(city_id,venue_name,address,capacity)
                        VALUES(%s,%s,%s,%s)""", venues)
-    cur.execute("SELECT venue_id, city_id, venue_name FROM venue")
+    cur.execute("SELECT venue_id, city_id, venue_name, capacity FROM venue")
     venue_rows = cur.fetchall()
     venues_by_city = {}
-    for vid, cid, vname in venue_rows:
-        venues_by_city.setdefault(cid, []).append((vid, vname))
+    for vid, cid, vname, cap in venue_rows:
+        venues_by_city.setdefault(cid, []).append((vid, vname, cap))
 
     # ---------- 2. 批量用户 + 收货地址 ----------
     print('生成用户 ...')
@@ -145,35 +148,57 @@ def main():
         phone = '139%08d' % (10000000 + i)
         users.append((uname, '$2b$10$0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ',
                       phone, f'{uname}@example.com', 1))
-    cur.executemany("""INSERT INTO app_user(username,password_hash,phone,email,status)
+    cur.executemany("""INSERT IGNORE INTO app_user(username,password_hash,phone,email,status)
                        VALUES(%s,%s,%s,%s,%s)""", users)
-    cur.execute("SELECT user_id, username FROM app_user WHERE username LIKE 'u%'")
-    bulk_users = [r[0] for r in cur.fetchall()]
+    bulk_users = demo_users(cur, 'u')
+    if not bulk_users:
+        raise RuntimeError('没有可用的生成器演示账号，请使用全新初始化的演示库')
+    existing_addresses = demo_addresses(cur, 'u')
 
     addrs = []
     for uid in bulk_users:
         nm = rand_name()
         cid, cname = random.choice(cities)
-        addrs.append((uid, nm, '13%09d' % random.randint(0, 999999999),
+        row = (uid, nm, '13%09d' % random.randint(0, 999999999),
                       f'{cname}市{random.choice(STREETS)}{random.randint(1,200)}号',
-                      1 if random.random() < 0.6 else 0))
+                      1 if random.random() < 0.6 else 0)
+        if uid not in existing_addresses:
+            addrs.append(row)
     cur.executemany("""INSERT INTO shipping_address(user_id,receiver_name,phone,address_detail,is_default)
                        VALUES(%s,%s,%s,%s,%s)""", addrs)
-    cur.execute("SELECT address_id, user_id FROM shipping_address WHERE user_id > 5")
-    addr_of_user = {}
-    for aid, uid in cur.fetchall():
-        addr_of_user[uid] = aid
+    addr_of_user = demo_addresses(cur, 'u')
 
     # ---------- 3. 演出 / 场次 / 票档 ----------
     print('生成演出/场次/票档 ...')
     today = date.today()
     tiers = []  # 内存票档：dict 列表
     sold_out_sessions = set()
-    session_counts = [random.choice([1, 1, 2]) for _ in SHOW_NAMES]
+    # 交错各类型演出，确保所有类型演出均匀分布于历史、在售与预售各个阶段
+    cats_buckets = {}
+    for item in SHOW_NAMES:
+        cats_buckets.setdefault(item[1], []).append(item)
+    interleaved_shows = []
+    max_len = max(len(b) for b in cats_buckets.values())
+    for i in range(max_len):
+        for c in (1, 2, 3, 5, 6, 7):
+            if c in cats_buckets and i < len(cats_buckets[c]):
+                interleaved_shows.append(cats_buckets[c][i])
+
+    session_counts = [random.choice([1, 1, 2]) for _ in interleaved_shows]
+    cur.execute('SELECT show_name,category_id,city_id FROM show_item')
+    preserved_shows = set(cur.fetchall())
     total_sessions = sum(session_counts)
     session_index = 0
-    for seq, (name, cat) in enumerate(SHOW_NAMES):
-        cid, cname = random.choice(cities)
+    generated_show_ids = []
+    for seq, (name, cat) in enumerate(interleaved_shows):
+        matched_city = next((c for c in cities if c[1] in name), None)
+        if matched_city:
+            cid, cname = matched_city
+        else:
+            cid, cname = random.choice(cities)
+        if (name, cat, cid) in preserved_shows:
+            session_index += session_counts[seq]
+            continue
         vlist = venues_by_city.get(cid) or random.choice(list(venues_by_city.values()))
         imgs = CAT_IMAGES[cat]
         poster = imgs[0]
@@ -181,16 +206,21 @@ def main():
                        VALUES(%s,%s,%s,%s,%s,1)""",
                     (name, cat, cid, poster, f'{name}，精彩呈现，欢迎购票。'))
         show_id = cur.lastrowid
-        # 介绍图片 2-3 张（从本类型真实图片中循环取）
-        for k in range(1, random.randint(2, 4)):
-            cur.execute("INSERT INTO show_image(show_id,image_url,sort_no) VALUES(%s,%s,%s)",
-                        (show_id, imgs[k % len(imgs)], k))
+        generated_show_ids.append(show_id)
         # 每场演出生成 1-2 个同状态场次；销售时间统一提前 30 天。
         n_sess = session_counts[seq]
         used_slots = set()
         for s in range(n_sess):
             status = bucket_for_index(session_index, total_sessions)
-            vid, vname = random.choice(vlist)
+            big_venues = [v for v in vlist if v[2] >= 10000]
+            small_venues = [v for v in vlist if v[2] < 10000]
+            if cat in (1, 3) and big_venues:
+                chosen_vlist = big_venues
+            elif cat in (2, 5, 6, 7) and small_venues:
+                chosen_vlist = small_venues
+            else:
+                chosen_vlist = vlist
+            vid, vname, cap = random.choice(chosen_vlist)
             while True:
                 show_day = show_day_for_status(status, today, random)
                 hh, mm = random.choice([(19, 30), (20, 0), (14, 30), (19, 0)])
@@ -205,10 +235,18 @@ def main():
             session_id = cur.lastrowid
             if status == SOLD_OUT:
                 sold_out_sessions.add(session_id)
-            # 票档 3-5 个
+            # 票档 3-5 个，保证所有票档座位总和 <= 场馆容量 cap
             price_tiers = TIER_PRICES[cat]
-            for tname, price in price_tiers:
-                total = random.choice([300, 500, 800, 1200, 2000, 3000])
+            n_tiers = len(price_tiers)
+            target_total = int(cap * random.uniform(0.7, 0.95))
+            weights = list(range(1, n_tiers + 1))
+            weight_sum = sum(weights)
+            tier_totals = [max(50, round((target_total * w / weight_sum) / 50) * 50) for w in weights]
+            while sum(tier_totals) > cap:
+                max_idx = tier_totals.index(max(tier_totals))
+                tier_totals[max_idx] -= 50
+
+            for (tname, price), total in zip(price_tiers, tier_totals):
                 cur.execute("""INSERT INTO ticket_tier(session_id,tier_name,price,total_seats,sold_seats)
                                VALUES(%s,%s,%s,%s,0)""", (session_id, tname, price, total))
                 tiers.append({'tier_id': cur.lastrowid, 'session_id': session_id,
@@ -217,16 +255,8 @@ def main():
             session_index += 1
     conn.commit()
 
-    # 把 seed 票档也纳入内存（用于售出）
-    cur.execute("""SELECT t.tier_id, t.session_id, t.price, t.total_seats, t.sold_seats,
-                          se.sale_start, se.show_time
-                   FROM ticket_tier t JOIN show_session se ON se.session_id=t.session_id""")
-    tier_mem = {}
-    for tid, sid, price, total, sold, sale_start, show_time in cur.fetchall():
-        tier_mem[tid] = {'tier_id': tid, 'session_id': sid, 'price': float(price),
-                         'total': total, 'sold': sold, 'sale_start': sale_start, 'show_time': show_time}
-    for t in tiers:
-        tier_mem[t['tier_id']] = t
+    # 仅针对本次生成的演示票档生成历史订单，保护基础种子场次与预售状态
+    tier_mem = {t['tier_id']: t for t in tiers}
 
     # ---------- 4. 历史订单（过去 90 天） ----------
     print('生成历史订单 ...')
@@ -255,9 +285,17 @@ def main():
                 continue
             uid = random.choice(bulk_users)
             addr_id = addr_of_user[uid]
-            pay_dt = datetime.combine(d, time(random.randint(9, 22), random.randint(0, 59)))
+            # 严格约束付款时间在售票开启与开演之间
+            day_start = datetime.combine(d, time(9, 0))
+            earliest = max(day_start, t['sale_start'])
+            latest = min(datetime.combine(d, time(22, 59, 59)), t['show_time'] - timedelta(seconds=1))
+            if earliest >= latest:
+                pay_dt = earliest
+            else:
+                total_delta = int((latest - earliest).total_seconds())
+                pay_dt = earliest + timedelta(seconds=random.randint(0, total_delta))
             order_seq += 1
-            order_no = 'B%s%05d' % (d.strftime('%Y%m%d'), order_seq)
+            order_no = 'B%s%08d' % (batch_id, order_seq)
             amount = t['price'] * k
             orders.append((order_no, uid, t['session_id'], t['tier_id'], addr_id,
                            k, amount, 2, pay_dt, pay_dt))
@@ -265,7 +303,7 @@ def main():
             for _i in range(k):
                 att_seq += 1
                 aname = rand_name()
-                idno = 'B%08d' % att_seq
+                idno = 'B%s%08d' % (batch_id, att_seq)
                 cur.execute("INSERT INTO attendee(user_id,attendee_name,id_type,id_no) VALUES(%s,%s,1,%s)",
                             (uid, aname, idno))
                 att_id = cur.lastrowid
@@ -316,14 +354,31 @@ def main():
                    SELECT DATE(pay_time), COUNT(*), SUM(ticket_count), SUM(total_amount)
                    FROM ticket_order WHERE order_status=2 AND pay_time IS NOT NULL
                    GROUP BY DATE(pay_time)""")
-    # Past sessions are closed; a future session with no inventory is sold out.
+    # Past sessions are closed; future sessions without inventory are sold out;
+    # future sessions with inventory are either on sale (sale_start <= now) or presale (sale_start > now).
     cur.execute("UPDATE show_session SET sale_status=4 WHERE show_time<=NOW()")
     cur.execute("""UPDATE show_session se SET se.sale_status=3
                    WHERE se.show_time>NOW()
                      AND EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id)
                      AND NOT EXISTS (SELECT 1 FROM ticket_tier t
                                      WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
+    cur.execute("""UPDATE show_session se SET se.sale_status=2
+                   WHERE se.show_time>NOW() AND se.sale_start<=NOW()
+                     AND EXISTS (SELECT 1 FROM ticket_tier t
+                                 WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
+    cur.execute("""UPDATE show_session se SET se.sale_status=1
+                   WHERE se.show_time>NOW() AND se.sale_start>NOW()
+                     AND EXISTS (SELECT 1 FROM ticket_tier t
+                                 WHERE t.session_id=se.session_id AND t.total_seats-t.sold_seats>0)""")
     conn.commit()
+
+    # 自动关联巡演系列
+    try:
+        from group_series import main as group_series_main
+        print('自动聚合巡演 series ...')
+        group_series_main(generated_show_ids)
+    except Exception as e:
+        print('巡演聚合跳过或异常:', e)
 
     # ---------- 6. 统计输出 ----------
     def cnt(sql):

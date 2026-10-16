@@ -35,11 +35,13 @@ IP_KEYWORDS = [
     ('戏台', '话剧《戏台》', 2),
     ('歌剧魅影', '音乐剧《歌剧魅影》', 2),
     ('巴黎圣母院', '音乐剧《巴黎圣母院》', 2),
+    ('猫', '音乐剧《猫》Cats', 2),
     ('雷雨', '话剧《雷雨》', 2),
     ('中超', '中超联赛 主场赛事', 3),
     ('CBA', 'CBA 职业篮球联赛', 3),
     ('NBA', 'NBA 中国赛', 3),
     ('乒联', '国际乒联世界巡回赛', 3),
+    ('排球', '排球超级联赛', 3),
     ('梵高', '梵高《星夜》光影艺术展', 5),
     ('teamLab', 'teamLab 无界美术馆', 5),
     ('故宫', '故宫文物特展', 5),
@@ -67,10 +69,15 @@ CAT_POSTER = {
 }
 
 
-def main():
+def main(show_ids=None, include_unmapped=False):
     conn = pymysql.connect(cursorclass=pymysql.cursors.DictCursor, **DB_CONFIG)
     cur = conn.cursor()
-    cur.execute("SELECT show_id, show_name, category_id FROM show_item WHERE series_id IS NULL")
+    sql = "SELECT show_id, show_name, category_id, poster_url FROM show_item WHERE series_id IS NULL"
+    args = ()
+    if show_ids is not None:
+        args = tuple(show_ids)
+        sql += (' AND show_id IN (' + ','.join(['%s'] * len(args)) + ')') if args else ' AND 1=0'
+    cur.execute(sql, args)
     rows = cur.fetchall()
     print('待聚合演出数:', len(rows))
 
@@ -82,9 +89,10 @@ def main():
 
     created = 0
     grouped = 0
+    assigned = set()
     for kw, series_name, cat in IP_KEYWORDS:
         for r in rows:
-            if kw in r['show_name']:
+            if kw in r['show_name'] and r['category_id'] == cat and r['show_id'] not in assigned:
                 if series_name not in series_cache:
                     cur.execute(
                         "INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description) "
@@ -96,6 +104,21 @@ def main():
                 cur.execute("UPDATE show_item SET series_id=%s WHERE show_id=%s",
                             (series_cache[series_name], r['show_id']))
                 grouped += 1
+                assigned.add(r['show_id'])
+    if include_unmapped:
+        for row in rows:
+            if row['show_id'] in assigned:
+                continue
+            name = row['show_name'].rsplit('·', 1)[0].strip()
+            if name not in series_cache:
+                cur.execute("""INSERT INTO show_series(series_name,category_id,main_artist,poster_url,description)
+                               VALUES(%s,%s,%s,%s,%s)""",
+                            (name, row['category_id'], name, row['poster_url'], name + '，欢迎观演。'))
+                series_cache[name] = cur.lastrowid
+                created += 1
+            cur.execute('UPDATE show_item SET series_id=%s WHERE show_id=%s',
+                        (series_cache[name], row['show_id']))
+            grouped += 1
     conn.commit()
     print('新建巡演:', created, ' 聚合演出:', grouped)
     cur.execute("SELECT COUNT(*) AS c FROM show_series")

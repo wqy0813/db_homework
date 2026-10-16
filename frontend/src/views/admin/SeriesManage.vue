@@ -78,6 +78,7 @@
           </el-upload>
           <el-input v-model="form.poster_url" placeholder="也可直接填写图片 URL" />
           <el-image v-if="form.poster_url" :src="form.poster_url" fit="cover" class="poster-preview" />
+          <div class="poster-tip muted">支持上传图片（jpg/png/webp等），或填写以 http://、https://、/static 开头的网络地址；不支持本地文件路径（如 C:\...）</div>
         </div>
       </el-form-item>
       <el-form-item label="巡演介绍"><el-input v-model="form.description" type="textarea" :rows="4" maxlength="2000" show-word-limit /></el-form-item>
@@ -148,6 +149,9 @@ async function uploadPoster({ file, onSuccess, onError }) {
 }
 async function save() {
   if (!form.series_name.trim() || !form.category_id) return ElMessage.warning('请填写巡演名称并选择类型')
+  if (form.poster_url && (/^[a-zA-Z]:[\\/]/.test(form.poster_url) || form.poster_url.includes('\\'))) {
+    return ElMessage.warning('图片地址格式不正确：不能填写本地文件路径，请先点击「选择并上传」或填写网络地址')
+  }
   saving.value = true
   try {
     const payload = { ...form, series_name: form.series_name.trim() }
@@ -178,4 +182,5 @@ onMounted(load)
 .poster-editor { display:flex; align-items:center; gap:10px; flex-wrap:wrap; width:100%; }
 .poster-editor .el-input { flex:1; min-width:220px; }
 .poster-preview { width:56px; height:56px; border-radius:4px; }
+.poster-tip { font-size: 12px; color: #888; margin-top: 4px; width: 100%; }
 </style>

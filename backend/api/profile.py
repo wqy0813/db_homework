@@ -242,16 +242,28 @@ def update_attendee():
         name, id_type, id_no = _attendee_values(body)
     except (TypeError, ValueError) as e:
         return fail(str(e) if isinstance(e, ValueError) else '购票人编号不正确')
+    conn = get_conn()
     try:
-        if not q("SELECT 1 FROM attendee WHERE attendee_id=%s AND user_id=%s", (aid, uid), one=True):
-            return fail('购票人不存在或无权操作')
-        if q("SELECT 1 FROM order_item WHERE attendee_id=%s LIMIT 1", (aid,), one=True):
-            return fail('为保留历史订单信息，该购票人不能修改或删除，可以新增一位用于后续购票')
-        execute("""UPDATE attendee SET attendee_name=%s,id_type=%s,id_no=%s
-                   WHERE attendee_id=%s AND user_id=%s""", (name, id_type, id_no, aid, uid))
+        with conn.cursor() as cur:
+            conn.begin()
+            cur.execute("SELECT attendee_id FROM attendee WHERE attendee_id=%s AND user_id=%s FOR UPDATE", (aid, uid))
+            if not cur.fetchone():
+                return fail('购票人不存在或无权操作')
+            cur.execute("SELECT 1 FROM order_item WHERE attendee_id=%s LIMIT 1", (aid,))
+            if cur.fetchone():
+                return fail('为保留历史订单信息，该购票人不能修改或删除，可以新增一位用于后续购票')
+            cur.execute("""UPDATE attendee SET attendee_name=%s,id_type=%s,id_no=%s
+                           WHERE attendee_id=%s AND user_id=%s""", (name, id_type, id_no, aid, uid))
+        conn.commit()
         return ok(msg='购票人已更新')
     except pymysql.err.IntegrityError:
+        conn.rollback()
         return fail('更新失败：该证件类型+证件号已存在，或购票人已被订单引用')
+    except Exception:
+        conn.rollback()
+        return fail('更新失败，请稍后重试')
+    finally:
+        conn.close()
 
 
 @profile_bp.route('/attendees/delete', methods=['POST'])

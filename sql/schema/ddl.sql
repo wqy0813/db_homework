@@ -38,7 +38,7 @@ CREATE TABLE category (
 CREATE TABLE admin (
   admin_id      INT          NOT NULL AUTO_INCREMENT COMMENT '管理员ID',
   username      VARCHAR(50)  NOT NULL COMMENT '用户名',
-  password_hash CHAR(60)     NOT NULL COMMENT '口令哈希(bcrypt)',
+  password_hash VARCHAR(255) NOT NULL COMMENT '口令哈希(werkzeug/bcrypt)',
   real_name     VARCHAR(50)  DEFAULT NULL COMMENT '姓名',
   role          TINYINT      NOT NULL DEFAULT 1 COMMENT '1普通管理员 9超级管理员',
   create_time   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -50,7 +50,7 @@ CREATE TABLE admin (
 CREATE TABLE app_user (
   user_id       BIGINT       NOT NULL AUTO_INCREMENT COMMENT '用户ID',
   username      VARCHAR(50)  NOT NULL COMMENT '用户名',
-  password_hash CHAR(60)     NOT NULL COMMENT '口令哈希(bcrypt)',
+  password_hash VARCHAR(255) NOT NULL COMMENT '口令哈希(werkzeug/bcrypt)',
   phone         VARCHAR(20)  NOT NULL COMMENT '手机号',
   email         VARCHAR(100) DEFAULT NULL COMMENT '邮箱',
   status        TINYINT      NOT NULL DEFAULT 1 COMMENT '1正常 0冻结',
@@ -366,17 +366,30 @@ SELECT t.tier_id, t.session_id, t.tier_name, t.price,
        CASE WHEN t.total_seats - t.sold_seats = 0 THEN 1 ELSE 0 END AS sold_out
 FROM ticket_tier t;
 
--- 视图 3：订单详情（“我的订单”列表数据源）
 CREATE OR REPLACE VIEW v_order_detail AS
-SELECT o.order_id, o.order_no, o.ticket_count, o.total_amount,
-       o.order_status, o.create_time, o.pay_time,
-       s.show_name, v.venue_name, c.city_name, se.show_time,
-       addr.receiver_name, addr.phone, addr.address_detail
+SELECT o.order_id,
+       o.order_no,
+       o.user_id,
+       o.ticket_count,
+       o.total_amount,
+       o.order_status,
+       o.create_time,
+       o.pay_time,
+       s.show_name,
+       v.venue_name,
+       c.city_name,
+       se.show_time,
+       t.tier_name,
+       COALESCE((SELECT oi.unit_price FROM order_item oi WHERE oi.order_id = o.order_id LIMIT 1), t.price) AS unit_price,
+       addr.receiver_name,
+       addr.phone,
+       addr.address_detail
 FROM ticket_order o
 JOIN show_session se       ON se.session_id = o.session_id
 JOIN show_item s           ON s.show_id = se.show_id
 JOIN venue v               ON v.venue_id = se.venue_id
 JOIN city c                ON c.city_id = v.city_id
+JOIN ticket_tier t         ON t.tier_id = o.tier_id
 JOIN shipping_address addr ON addr.address_id = o.address_id;
 
 -- ============================================================================

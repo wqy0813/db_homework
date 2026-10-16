@@ -107,6 +107,8 @@ UPDATE show_item SET series_id = 8 WHERE show_id = 8;
 -- ----------------------------------------------------------------------------
 INSERT INTO show_image (show_id, image_url, sort_no) VALUES
   (1,'/posters/D/series_069_poster.jpg',1),
+  (1,'/static/img/concert2.jpg',2),
+  (1,'/static/img/concert3.jpg',3),
   (2,'/posters/C/series_072_poster.jpg',1),
   (3,'/posters/A/series_003_poster.jpg',1),
   (4,'/posters/B/series_004_poster.jpg',1),
@@ -224,7 +226,9 @@ INSERT INTO attendee (attendee_id, user_id, attendee_name, id_type, id_no) VALUE
   (7, 4,'赵六',   1,'330103198707073333'),
   (8, 4,'赵乐乐', 1,'330103201601028888'),
   (9, 5,'陈七',   1,'510107199209094444'),
-  (10,5,'陈八',   2,'510107198812125555');  -- 护照
+  (10,5,'陈八',   2,'510107198812125555'),  -- 护照
+  (11,1,'赵六',   1,'330103198707073333'),
+  (12,1,'赵乐乐', 1,'330103201601028888'); -- 同一观演人可由不同账号保存
 
 -- ----------------------------------------------------------------------------
 -- 十一、订单（o1-o7 已支付；o8 待支付；o9 已取消）
@@ -249,8 +253,8 @@ INSERT INTO order_item (order_id, tier_id, attendee_id, session_id, unit_price) 
   (2,11, 4, 3, 980.00),   -- o2 李四 张学友
   (2,11, 5, 3, 980.00),   -- o2 王芳
   (3, 3, 3, 1, 580.00),   -- o3 张三一家 周杰伦 看台580
-  (3, 3, 7, 1, 580.00),
-  (3, 3, 8, 1, 580.00),
+  (3, 3,11, 1, 580.00),
+  (3, 3,12, 1, 580.00),
   (4,25, 6, 7, 380.00),   -- o4 王五 CBA
   (5,39, 7,11, 880.00),   -- o5 赵六父子 郎朗
   (5,39, 8,11, 880.00),
@@ -286,25 +290,25 @@ WHERE order_status = 2 AND pay_time IS NOT NULL
 GROUP BY DATE(pay_time);
 
 -- ----------------------------------------------------------------------------
--- 十五、售票状态自动推进事件（每 10 分钟，属于物化状态维护）
---   事件只会关闭已结束/无余票场次，不会把预售站点批量提升为在售，
---   以免破坏“每个系列最多一个在售站”的约束。新增数据后运行
---   scripts/data/rebalance_status.py 选择新的在售站点。
+-- 十五、售票状态自动推进事件（每 1 分钟，属于物化状态维护）
+--   各城市站按各自的时间和库存独立售票，不限制同一巡演的在售城市数。
+--   优先级与应用一致：已结束 > 售罄 > 按开售时间判断在售或预售。
 --   SET GLOBAL event_scheduler = ON。
 -- ----------------------------------------------------------------------------
 DELIMITER //
 DROP EVENT IF EXISTS ev_session_status//
 CREATE EVENT ev_session_status
-ON SCHEDULE EVERY 10 MINUTE
+ON SCHEDULE EVERY 1 MINUTE
   STARTS CURRENT_TIMESTAMP
 COMMENT '自动推进演出场次售票状态'
 DO
 BEGIN
-  -- 已结束场次与卖完的未来场次使用不同状态。
+  -- 1. 已过开演时间的场次推进为 4 (已结束)
   UPDATE show_session se
   SET se.sale_status = 4
-  WHERE se.show_time <= NOW();
+  WHERE se.show_time <= NOW() AND se.sale_status <> 4;
 
+  -- 2. 未来场次无余票的推进为 3 (已售罄)
   UPDATE show_session se
   SET se.sale_status = 3
   WHERE se.show_time > NOW()
@@ -313,11 +317,32 @@ BEGIN
           SELECT 1 FROM ticket_tier t
           WHERE t.session_id = se.session_id
             AND t.total_seats - t.sold_seats > 0
-        );
+        )
+    AND se.sale_status <> 3;
+
+  -- 3. 到达开售时间且有余票的未来场次推进为 2 (售票中)
+  UPDATE show_session se
+  SET se.sale_status = 2
+  WHERE se.show_time > NOW()
+    AND se.sale_start <= NOW()
+    AND (NOT EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id = se.session_id)
+         OR EXISTS (SELECT 1 FROM ticket_tier t
+                    WHERE t.session_id = se.session_id AND t.total_seats > t.sold_seats))
+    AND se.sale_status <> 2;
+
+  -- 4. 未到开售时间的未来场次维持/置为 1 (预售中)
+  UPDATE show_session se
+  SET se.sale_status = 1
+  WHERE se.show_time > NOW()
+    AND se.sale_start > NOW()
+    AND (NOT EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id = se.session_id)
+         OR EXISTS (SELECT 1 FROM ticket_tier t
+                    WHERE t.session_id = se.session_id AND t.total_seats > t.sold_seats))
+    AND se.sale_status <> 1;
 END//
 DELIMITER ;
 
--- 查看事件：SHOW EVENTS;  手动验证可直接执行上述两条 UPDATE。
+-- 查看事件：SHOW EVENTS;  手动验证可直接执行上述四条 UPDATE。
 
 -- ============================================================================
 -- 附录（可选）：批量生成 10 万用户，验证大数据量

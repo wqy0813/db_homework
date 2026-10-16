@@ -12,16 +12,16 @@
 
 - 浏览巡演/IP 列表，按城市、类型和关键词筛选。
 - 查看巡演详情及其城市站点。
-- 查看单场演出详情、演出图片、场次、场馆、票档、价格和余票。
+- 查看单场演出详情、海报、场次、场馆、票档、价格和余票。
 - 访问登录页。
 
 ### 普通用户
 
-- 使用演示账号登录。
+- 注册普通账号，或使用演示账号登录。
 - 选择场次、票档、票数、收货信息和购票人下单。
 - 查看我的订单及订单明细。
-- 新增、查看、删除收货信息。
-- 新增、查看、删除常用购票人。
+- 新增、查看、编辑、删除收货信息；已用于订单的资料保留历史保护。
+- 新增、查看、编辑、删除常用购票人；购票页可直接补齐资料。
 
 ### 管理员
 
@@ -37,7 +37,7 @@
 - `order_item` 的唯一键 `UNIQUE(attendee_id, session_id)` 实现同一购票人同一场次限购 1 张。
 - `purchase_request` 记录购票请求，包括失败原因。
 - `ticket_order` 支付成功时由触发器累加 `sales_daily`。
-- `show_session.sale_status` 表示预售中、售票中或售罄；数据库脚本包含状态推进事件定义。
+- `show_session.sale_status` 表示预售中、售票中、售罄或已结束；数据库脚本包含每 1 分钟执行的状态推进事件。
 
 ## 技术栈与运行结构
 
@@ -168,8 +168,15 @@ sql/seed/seed_data.sql
 使用命令行时，示例为：
 
 ```powershell
-mysql -h 127.0.0.1 -P 3306 -u root -p < sql/schema/ddl.sql
-mysql -h 127.0.0.1 -P 3306 -u root -p < sql/seed/seed_data.sql
+mysql -h 127.0.0.1 -P 3306 -u root -p
+```
+
+在 MySQL 客户端中执行：
+
+```sql
+SOURCE sql/schema/ddl.sql;
+SOURCE sql/seed/seed_data.sql;
+SET GLOBAL event_scheduler = ON;
 ```
 
 检查数据库：
@@ -182,7 +189,7 @@ SELECT COUNT(*) FROM ticket_sales.ticket_order;
 
 当前仓库中的数据库可能已经由数据生成脚本扩充，数量不一定等于基础 seed 数据的数量。`sql/schema/views.sql` 通常不需要单独执行，因为 `ddl.sql` 已包含 3 个业务视图；如果视图被删除或需要单独重建，再执行该文件。
 
-需要升级旧数据库时，先确认其当前结构版本，再参考 `sql/archive/` 中对应的迁移脚本；不要把归档迁移脚本用于新库。phase 5 场次状态迁移会调整开售时间并更新已开演场次状态。新数据库只需执行上面的 DDL 和完整 seed。
+本轮旧库升级使用 `sql/migrations/20261016_integrate_members.sql`，具体步骤见 [组员部署使用手册](docs/组员部署使用手册.md)。`sql/archive/` 保留历史迁移，不要顺序执行全部归档脚本。新数据库只需执行上面的 DDL 和完整 seed。
 
 ### 数据库连接配置
 
@@ -206,7 +213,7 @@ $env:DB_PASSWORD = 'your-mysql-password'
 python backend/app.py
 ```
 
-请勿把真实生产密码提交到 Git。`config.py` 和 `start_website.bat` 默认不设置密码；如果 MySQL 需要密码，请在启动前设置 `DB_PASSWORD` 环境变量。
+请勿把真实生产密码提交到 Git。当前本地配置保留演示环境默认值；换电脑时请通过 `DB_PASSWORD` 环境变量设置自己的 MySQL 密码。
 
 ## 前端开发模式
 

@@ -25,6 +25,7 @@
           </el-upload>
           <el-input v-model="form.poster_url" placeholder="也可直接填写图片 URL" />
           <el-image v-if="form.poster_url" :src="form.poster_url" fit="cover" class="poster-preview" />
+          <div class="poster-tip muted">支持上传图片（jpg/png/webp等），或填写以 http://、https://、/static 开头的网络地址；不支持本地文件路径（如 C:\...）</div>
         </div>
       </el-form-item>
       <el-form-item label="演出介绍">
@@ -74,6 +75,9 @@ async function create() {
   if (!form.show_name.trim() || !form.category_id || !form.city_id) {
     return ElMessage.warning('请填写演出名称、类型和城市')
   }
+  if (form.poster_url && (/^[a-zA-Z]:[\\/]/.test(form.poster_url) || form.poster_url.includes('\\'))) {
+    return ElMessage.warning('图片地址格式不正确：不能填写本地文件路径，请先点击「选择并上传」或填写网络地址')
+  }
   saving.value = true
   try {
     const r = await api.post('/admin/shows/create', { ...form, show_name: form.show_name.trim() })
@@ -89,4 +93,5 @@ onMounted(loadDicts)
 .poster-editor { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .poster-editor .el-input { width: 350px; }
 .poster-preview { width: 56px; height: 56px; border-radius: 4px; }
+.poster-tip { font-size: 12px; color: #888; margin-top: 4px; width: 100%; }
 </style>

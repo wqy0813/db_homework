@@ -2,13 +2,12 @@
 """按场次时间、开售时间和余票重算演出销售状态。
 
 规则：已结束场次为已结束（4）；卖完的未来场次为售罄（3）；
-一个系列最多选择一个有余票且已开售的城市站为在售（2）；
-其余未结束且有余票的站点为预售（1），无余票站点为售罄（3）。脚本可重复执行，--dry-run 只预览。
+每个城市站按各自的开售时间独立在售（2）或预售（1），不限制同一巡演的在售站数。
+无余票且已设置票档的未来场次为售罄（3）。脚本可重复执行，--dry-run 只预览。
 """
 from __future__ import annotations
 
 import argparse
-import io
 import os
 import sys
 from collections import defaultdict
@@ -16,7 +15,6 @@ from collections import defaultdict
 import pymysql
 from pymysql.cursors import DictCursor
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "backend"))
 from config import DB_CONFIG  # noqa: E402
 
@@ -26,6 +24,7 @@ def load_rows(cur):
         """
         SELECT sh.series_id, sh.show_id, se.session_id, se.show_time, se.sale_start,
                se.sale_status,
+               COUNT(t.tier_id) AS tier_count,
                COALESCE(SUM(t.total_seats), 0) AS total_seats,
                COALESCE(SUM(t.sold_seats), 0) AS sold_seats,
                COALESCE(SUM(GREATEST(t.total_seats - t.sold_seats, 0)), 0) AS remain
@@ -40,38 +39,21 @@ def load_rows(cur):
 
 
 def plan_statuses(rows, now):
-    """返回 session_id -> new_status，并返回每个系列选中的在售 show_id。"""
-    stations = defaultdict(list)
-    for row in rows:
-        # 未归入系列的演出各自独立处理，不和其它未分组演出抢唯一在售名额。
-        key = ("series", row["series_id"]) if row["series_id"] is not None else ("show", row["show_id"])
-        stations[key].append(row)
-
-    selected = {}
-    for key, station_rows in stations.items():
-        candidates = []
-        for show_id in {r["show_id"] for r in station_rows}:
-            future = [r for r in station_rows if r["show_id"] == show_id and r["show_time"] > now]
-            if any(r["sale_start"] <= now and int(r["remain"]) > 0 for r in future):
-                candidates.append((min(r["show_time"] for r in future), show_id))
-        if candidates:
-            # 最近一站优先；show_id 保证同一日期下结果稳定。
-            selected[key] = min(candidates)[1]
-
+    """返回各场次状态，并按巡演或单场演出汇总全部在售站点。"""
+    selected = defaultdict(set)
     result = {}
-    for key, station_rows in stations.items():
-        chosen_show = selected.get(key)
-        for row in station_rows:
-            if row["show_time"] <= now:
-                status = 4
-            elif int(row["remain"]) <= 0:
-                status = 3
-            elif chosen_show == row["show_id"] and row["sale_start"] <= now:
-                status = 2
-            else:
-                # 其它站点即使已经到开售时间，也降为预售，确保系列内最多一个在售站。
-                status = 1
-            result[row["session_id"]] = status
+    for row in rows:
+        has_tiers = int(row.get("tier_count", 1 if row["total_seats"] else 0)) > 0
+        if row["show_time"] <= now:
+            status = 4
+        elif has_tiers and int(row["remain"]) <= 0:
+            status = 3
+        else:
+            status = 2 if row["sale_start"] <= now else 1
+        result[row["session_id"]] = status
+        if status == 2:
+            key = ("series", row["series_id"]) if row["series_id"] is not None else ("show", row["show_id"])
+            selected[key].add(row["show_id"])
     return result, selected
 
 
@@ -79,31 +61,25 @@ def validate(cur, now):
     errors = []
     cur.execute(
         """
-        SELECT COUNT(*) AS c FROM (
-          SELECT show_time, sale_start,
-                 LAG(show_time) OVER (ORDER BY show_time, session_id) AS prev_show_time,
-                 LAG(sale_start) OVER (ORDER BY show_time, session_id) AS prev_sale_start
-          FROM show_session
-        ) ordered_sessions
-        WHERE show_time > prev_show_time AND sale_start < prev_sale_start
+        SELECT COUNT(*) AS c FROM show_session WHERE sale_start >= show_time
         """
     )
     release_order_errors = cur.fetchone()["c"]
     if release_order_errors:
-        errors.append("开演更早的场次却更晚开售: %s" % release_order_errors)
+        errors.append("开售时间不早于开演时间: %s" % release_order_errors)
 
     cur.execute(
         """
-        SELECT series_id, SUM(show_status = 2) AS onsale_count
-        FROM v_show_list
-        WHERE series_id IS NOT NULL
-        GROUP BY series_id
-        HAVING onsale_count > 1
-        """
+        SELECT COUNT(*) AS c FROM show_session se
+        WHERE se.show_time > %s AND se.sale_start <= %s AND se.sale_status = 1
+          AND (NOT EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id)
+               OR EXISTS (SELECT 1 FROM ticket_tier t WHERE t.session_id=se.session_id
+                          AND t.total_seats>t.sold_seats))
+        """, (now, now)
     )
-    duplicate_series = cur.fetchall()
-    if duplicate_series:
-        errors.append("系列存在多个在售站点: %s" % duplicate_series[:5])
+    missed_release = cur.fetchone()["c"]
+    if missed_release:
+        errors.append("已到开售时间却仍为预售的场次: %s" % missed_release)
 
     cur.execute("SELECT COUNT(*) AS c FROM show_session WHERE show_time <= %s AND sale_status <> 4", (now,))
     past_open = cur.fetchone()["c"]
@@ -170,6 +146,8 @@ def validate(cur, now):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="只计算和打印变更，不写入数据库")
     args = parser.parse_args()

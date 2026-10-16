@@ -15,8 +15,7 @@
     </el-select>
     <el-input v-model="keyword" placeholder="搜索巡演/艺人" clearable @keyup.enter="load" style="width:220px" />
     <el-button type="danger" @click="load">筛选</el-button>
-    <el-button @click="resetFilters">清空</el-button>
-    <span class="muted" style="margin-left:auto;align-self:center">修改条件后点击「筛选」或在搜索框按回车查询</span>
+    <el-button type="success" @click="resetFilters">清空</el-button>
   </el-card>
 
   <template v-if="!appliedCityId">
@@ -43,11 +42,11 @@
     </div>
   </template>
 
-  <h2 v-if="!appliedCityId" style="margin-top:30px">其他单场演出</h2>
-  <h2 v-else style="margin-top:30px">城市演出</h2>
+  <h2 v-if="!appliedCityId" style="margin-top:30px">单场演出</h2>
+  <h2 v-else style="margin-top:30px">筛选结果</h2>
   <div class="grid" v-loading="loadingShows">
     <el-card v-for="s in visibleShows" :key="s.show_id" shadow="hover" class="series-card" body-style="padding:0"
-             @click="openInNewTab('/shows/'+s.show_id, { from: 'series' })">
+             @click="openShow(s)">
       <div class="poster-wrap">
         <img v-if="s.poster_url" :src="s.poster_url" class="poster-img" />
         <div v-else class="poster-ph">{{ s.show_name.slice(0,1) }}</div>
@@ -67,16 +66,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { useStore, STATUS_NAMES, saveFilter, loadFilter } from '../store'
 
 const router = useRouter()
 const store = useStore()
-
-// 列表 → 详情全部在新标签页打开，原列表/筛选状态保留。
-// 不加 noopener：新标签里的"返回"按钮需要能 window.close() 关掉自己。
 function openInNewTab(path, query) {
   const url = router.resolve({ path, query }).href
   window.open(url, '_blank')
@@ -89,58 +85,60 @@ const visibleShows = ref([])
 const cities = ref([])
 const cats = ref([])
 const cityId = ref(init.cityId || '')
-const appliedCityId = ref(init.cityId || '')
+const appliedCityId = ref('')
 const catId = ref(init.catId || '')
 const statusId = ref(init.statusId || '')
 const keyword = ref(init.keyword || '')
 const loading = ref(false)
 const loadingShows = ref(false)
-
+let requestSequence = 0
 const tagType = (cat) => ({ 1: 'danger', 2: 'warning', 3: 'success', 5: 'info', 6: 'primary', 7: 'warning' }[cat] || 'info')
 const statusTagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 
 async function load() {
-  saveFilter(FILTER_KEY, { cityId: cityId.value, catId: catId.value, statusId: statusId.value, keyword: keyword.value })
+  const requestId = ++requestSequence
+  const filters = {
+    city_id: cityId.value,
+    category_id: catId.value,
+    status: statusId.value,
+    keyword: keyword.value.trim()
+  }
+  saveFilter(FILTER_KEY, { cityId: filters.city_id, catId: filters.category_id, statusId: filters.status, keyword: filters.keyword })
   loading.value = true
   loadingShows.value = true
   try {
     const params = {}
-    const filters = {
-      city_id: cityId.value,
-      category_id: catId.value,
-      status: statusId.value,
-      keyword: keyword.value.trim()
-    }
     if (filters.city_id) params.city_id = filters.city_id
     if (filters.category_id) params.category_id = filters.category_id
     if (filters.status) params.status = filters.status
     if (filters.keyword) params.keyword = filters.keyword
     const showsRequest = api.get('/shows', { params })
     if (filters.city_id) {
-      // 城市筛选展示该城市的站点演出本身，不再展示命中的巡演合集。
       const s = await showsRequest
+      if (requestId !== requestSequence) return
       series.value = []
       visibleShows.value = s.data.list || []
     } else {
       const [r, s] = await Promise.all([api.get('/series', { params }), showsRequest])
+      if (requestId !== requestSequence) return
       series.value = r.data.list || []
-      // 未选择城市时保留“巡演 + 独立单场演出”的分类展示。
-      visibleShows.value = (s.data.list || []).filter(x => !x.is_tour_station && !x.series_id)
+      visibleShows.value = (s.data.list || []).filter(x => !x.is_tour_station)
     }
     appliedCityId.value = filters.city_id
   } finally {
-    loading.value = false
-    loadingShows.value = false
+    if (requestId === requestSequence) {
+      loading.value = false
+      loadingShows.value = false
+    }
   }
 }
 
 function resetFilters() {
   cityId.value = ''
-  appliedCityId.value = ''
   catId.value = ''
   statusId.value = ''
   keyword.value = ''
-  saveFilter(FILTER_KEY, { cityId: '', catId: '', statusId: '', keyword: '' })
+  appliedCityId.value = ''
   load()
 }
 
@@ -152,17 +150,28 @@ async function loadDicts() {
 
 function goDetail(s) {
   const path = s.inferred ? '/series/group' : '/series/' + s.series_id
-  const query = s.inferred ? { name: s.group_name } : {}
+  const query = s.inferred ? { name: s.group_name } : undefined
   openInNewTab(path, query)
 }
 
-onMounted(() => { loadDicts(); load() })
+function openShow(s) {
+  const query = s.is_tour_station
+    ? (s.group_name
+        ? { from_group: s.group_name }
+        : s.series_id
+          ? { from_series: String(s.series_id) }
+          : { from_group: (s.show_name || '').split('·')[0].trim() })
+    : { from: 'series' }
+  openInNewTab('/shows/' + s.show_id, query)
+}
 
-// 退出登录时如果正停留在本页，组件不会重新挂载；
-// 这里监听登录状态，一旦登出立即把筛选条件归零并重新加载全量列表。
+onMounted(() => { loadDicts(); load() })
+onBeforeUnmount(() => { requestSequence++ })
 watch(() => store.isLogin, (now, before) => {
   if (before && !now) {
-    resetFilters()
+    cityId.value = ''; catId.value = ''; statusId.value = ''; keyword.value = ''
+    saveFilter(FILTER_KEY, { cityId: '', catId: '', statusId: '', keyword: '' })
+    load()
   }
 })
 </script>
@@ -176,10 +185,7 @@ watch(() => store.isLogin, (now, before) => {
 .poster-wrap { position: relative; height: 150px; }
 .cat-tag { position: absolute; top: 10px; right: 10px; }
 .st-tag { position: absolute; top: 10px; left: 10px; }
-.artist-badge { position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,.55);
-  color: #fff; padding: 4px 10px; border-radius: 16px; font-size: 13px; font-weight: 600; }
+.artist-badge { position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,.55); color: #fff; padding: 4px 10px; border-radius: 16px; font-size: 13px; font-weight: 600; }
 .title { font-size: 16px; margin-bottom: 6px; line-height: 1.4; min-height: 44px; }
 .price { color: #e94b64; font-weight: bold; margin-top: 8px; font-size: 16px; }
-.section-head { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; }
-.section-head h2 { margin: 0; }
 </style>

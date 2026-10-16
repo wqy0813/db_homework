@@ -10,8 +10,8 @@ USE ticket_sales;
 -- ----------------------------------------------------------------------------
 -- 视图 1：演出列表视图（名称、城市、类型、地点、最近演出日期、
 --         票价最低-最高、演出级售票状态）
---   状态聚合规则：使用 show_session.sale_status 物化状态；系列重平衡脚本
---                 保证每个系列最多一个城市站为在售。
+--   状态聚合规则：使用 show_session.sale_status 物化状态；场次状态维护脚本
+--                 按每个场次自己的时间和库存独立推进状态。
 --   地点取“最近一场演出”所在场馆。
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW v_show_list AS
@@ -86,6 +86,7 @@ FROM ticket_tier t;
 CREATE OR REPLACE VIEW v_order_detail AS
 SELECT o.order_id,
        o.order_no,
+       o.user_id,
        o.ticket_count,
        o.total_amount,
        o.order_status,
@@ -95,6 +96,8 @@ SELECT o.order_id,
        v.venue_name,
        c.city_name,
        se.show_time,
+       t.tier_name,
+       COALESCE((SELECT oi.unit_price FROM order_item oi WHERE oi.order_id = o.order_id LIMIT 1), t.price) AS unit_price,
        addr.receiver_name,
        addr.phone,
        addr.address_detail
@@ -103,6 +106,7 @@ JOIN show_session se       ON se.session_id = o.session_id
 JOIN show_item s           ON s.show_id = se.show_id
 JOIN venue v               ON v.venue_id = se.venue_id
 JOIN city c                ON c.city_id = v.city_id
+JOIN ticket_tier t         ON t.tier_id = o.tier_id
 JOIN shipping_address addr ON addr.address_id = o.address_id;
 
 -- ----------------------------------------------------------------------------

@@ -27,7 +27,7 @@
           <span class="muted">　📍 {{ se.venue_name }}（{{ se.address }}）</span>
           <span class="muted" v-if="se.min_p">　💰 ¥{{ Math.round(se.min_p) }}-{{ Math.round(se.max_p) }}</span>
         </div>
-        <el-tag :type="tagType(se.sale_status)">{{ statusName(se.sale_status) }}</el-tag>
+        <el-tag :type="tagType(se.sale_status)">{{ se.sale_status === 1 && sessionHasSold(se.session_id) ? '预售（往期已售）' : statusName(se.sale_status) }}</el-tag>
       </div>
       <el-table :data="tiers[se.session_id]||[]" size="small" style="margin:10px 0">
         <el-table-column prop="tier_name" label="票档" />
@@ -35,9 +35,9 @@
         <el-table-column prop="total_seats" label="总票数" width="80" />
         <el-table-column prop="sold_seats" label="已售" width="70" />
         <el-table-column prop="remain" label="余票" width="70" />
-        <el-table-column label="状态" width="120">
+        <el-table-column label="状态" width="140">
           <template #default="{row}">
-            <el-tag v-if="se.sale_status===1" type="warning">未开售</el-tag>
+            <el-tag v-if="se.sale_status===1" type="warning">{{ row.sold_seats > 0 ? '预售（往期已售）' : '未开售' }}</el-tag>
             <el-tag v-else-if="se.sale_status===4" type="info">演出已结束</el-tag>
             <el-tag v-else-if="se.sale_status===3 || row.remain===0" type="info">该票档售罄</el-tag>
             <el-tag v-else type="success">在售</el-tag>
@@ -100,12 +100,18 @@
         <template v-else-if="se.sale_status===1">
           <el-alert type="warning" :closable="false" style="margin-top:10px" show-icon>
             <template #title>
-              该场次预售中，开售时间：{{ fmt(se.sale_start) }}，开售后方可购票
+              <span v-if="sessionHasSold(se.session_id)">
+                本场次已完成首轮售票，下一轮开售时间：{{ fmt(se.sale_start) }}，开售后方可购票
+              </span>
+              <span v-else>
+                该场次预售中，开售时间：{{ fmt(se.sale_start) }}，开售后方可购票
+              </span>
             </template>
             <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
               <el-button size="small" @click="openAddAddress(se.session_id)">提前完善收货地址</el-button>
               <el-button size="small" @click="openAddAttendee(se.session_id)">提前完善购票人</el-button>
-              <span class="muted">提前填写资料不代表购票成功，开售前不能提交订单，也不会占用库存</span>
+              <span class="muted" v-if="sessionHasSold(se.session_id)">本场次已有历史销售记录（已售 {{ sessionSoldSeats(se.session_id) }} 张），提前填写资料不代表购票成功，开售前不能提交订单，也不会占用库存</span>
+              <span class="muted" v-else>提前填写资料不代表购票成功，开售前不能提交订单，也不会占用库存</span>
             </div>
           </el-alert>
         </template>
@@ -115,7 +121,7 @@
       </template>
 
       <el-alert v-else type="info" :closable="false" style="margin-top:10px">
-        <router-link to="/login">登录</router-link> 后即可购票
+        <router-link :to="{ path: '/login', query: { intent: 'login' } }">登录</router-link> 后即可购票
       </el-alert>
     </el-card>
   </div>
@@ -125,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
@@ -135,10 +141,13 @@ import AttendeeDialog from '../components/AttendeeDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
-const fromSeries = computed(() => Boolean(route.query.from_series || route.query.from_group))
-const backPath = computed(() => route.query.from_group
-  ? { path: '/series/group', query: { name: route.query.from_group } }
-  : route.query.from_series ? `/series/${route.query.from_series}` : '/series')
+const fromSeries = computed(() => Boolean(route.query.from_series || route.query.from_group || data.value.show?.series_id))
+const backPath = computed(() => {
+  if (route.query.from_group) return { path: '/series/group', query: { name: route.query.from_group } }
+  if (route.query.from_series) return `/series/${route.query.from_series}`
+  if (data.value.show?.series_id) return `/series/${data.value.show.series_id}`
+  return '/series'
+})
 const store = useStore()
 const data = ref({ show: null, sessions: [], images: [], tiers: {}, summary: {} })
 const loading = ref(false)
@@ -151,27 +160,37 @@ const tiers = ref({})
 const addrDialog = ref(false)
 const attDialog = ref(false)
 const pendingSessionId = ref(null)
+let profileRequest = 0
+let disposed = false
 
 const statusName = (s) => STATUS_NAMES[s]
 const idTypeName = (t) => ID_TYPE[t]
 const tagType = (s) => ({ 1: 'warning', 2: 'success', 3: 'info', 4: 'info' }[s])
 const fmt = (s) => s ? s.replace('T', ' ').slice(0, 16) : ''
+const sessionSoldSeats = (sessionId) => (tiers.value[sessionId] || []).reduce((acc, t) => acc + (t.sold_seats || 0), 0)
+const sessionHasSold = (sessionId) => sessionSoldSeats(sessionId) > 0
 
-// 返回目标按来路决定：从巡演页点单场演出进来回巡演列表，
-// 从城市站列表进来回城市站列表；直接输入网址时按 series_id 兜底。
-const backText = computed(() => fromSeries.value ? '返回站点列表' : '返回演出巡演')
-// 智能返回：本标签是新开的（无内部历史）→ 直接关闭标签回到原列表标签；
-// 本标签内部跳转过 → 浏览器后退。close 失败（如用户手动新开）时兜底回列表。
+// 返回目标按来路决定：从巡演页/站点进来的回巡演，独立单场演出回巡演列表；直接输入网址时按 series_id 兜底。
+const backText = computed(() => fromSeries.value ? '返回巡演详情' : '返回演出巡演')
+// 来源标签已经是目标巡演或列表时关闭当前标签，否则在当前标签返回所属页面。
 function goBack() {
-  if (window.history.length > 1) return router.back()
-  window.close()
-  setTimeout(() => { if (!window.closed) router.push(backPath.value) }, 200)
+  const target = new URL(router.resolve(backPath.value).href, window.location.href)
+  try {
+    const opener = window.opener
+    if (opener && !opener.closed && opener.location.origin === target.origin && opener.location.hash === target.hash) {
+      window.close()
+      setTimeout(() => { if (!window.closed) router.replace(backPath.value) }, 200)
+      return
+    }
+  } catch (e) { /* 来源页跨域或已关闭时直接返回所属页面 */ }
+  router.replace(backPath.value)
 }
 
 async function load() {
   loading.value = true
   try {
     const r = await api.get('/shows/' + route.params.id)
+    if (disposed) return
     data.value = r.data
     tiers.value = r.data.tiers
     // 把演出名写进浏览器标签标题，多标签浏览时分得清
@@ -191,14 +210,17 @@ async function load() {
 }
 
 async function loadProfile() {
+  const requestId = ++profileRequest
+  const userId = store.user?.id
   const [a, t] = await Promise.all([api.get('/addresses'), api.get('/attendees')])
+  if (disposed || requestId !== profileRequest || !store.isUser || store.user.id !== userId) return
   addresses.value = a.data.list
   attendees.value = t.data.list
 }
 
 // 第一次加载时为每个场次自动选默认地址；用户手动改过的不再覆盖
 function applyDefaultAddressForNewSessions() {
-  if (!addresses.value.length) return
+  if (disposed || !addresses.value.length) return
   const def = addresses.value.find(x => x.is_default) || addresses.value[0]
   Object.keys(form).forEach(sid => {
     if (form[sid].address_id == null) form[sid].address_id = def.address_id
@@ -308,6 +330,19 @@ async function buy(se) {
   } catch (e) { /* 拦截器已提示 */ } finally { buying.value = false }
 }
 
+watch(() => [store.user?.role, store.user?.id], async ([role]) => {
+  if (role === 'user' && data.value.show) {
+    try {
+      await loadProfile()
+      applyDefaultAddressForNewSessions()
+    } catch (e) { /* 请求拦截器已提示 */ }
+  } else if (role !== 'user') {
+    profileRequest++
+    addresses.value = []
+    attendees.value = []
+  }
+})
+onBeforeUnmount(() => { disposed = true; profileRequest++ })
 onMounted(load)
 </script>
 

@@ -14,8 +14,15 @@ def _row(r):
     """把 datetime 等转成可序列化的基本类型。"""
     out = {}
     for k, v in r.items():
-        if hasattr(v, 'isoformat'):
+        if v is None:
+            out[k] = None
+        elif hasattr(v, 'isoformat'):
             out[k] = v.isoformat(sep=' ') if hasattr(v, 'hour') else v.isoformat()
+        elif k.endswith('_id') or k in ('session_count', 'station_count', 'city_count', 'status', 'show_status', 'ticket_count'):
+            try:
+                out[k] = int(v)
+            except (ValueError, TypeError):
+                out[k] = v
         elif hasattr(v, 'as_integer_ratio'):  # Decimal
             out[k] = float(v)
         else:
@@ -104,8 +111,6 @@ def show_detail(show_id):
     show.pop('series_poster_url', None)
     pr = q("SELECT min_price,max_price,show_status,show_dates FROM v_show_list WHERE show_id=%s",
            (show_id,), one=True) or {}
-    images = [_row(r) for r in q(
-        "SELECT * FROM show_image WHERE show_id=%s ORDER BY sort_no,image_id", (show_id,))]
     sessions = q("""SELECT se.session_id, se.show_id, se.venue_id,
                     se.show_time, se.sale_start,
                     se.sale_status,
@@ -121,7 +126,7 @@ def show_detail(show_id):
     tiers_by_session = {}
     for t in tiers:
         tiers_by_session.setdefault(t['session_id'], []).append(_row(t))
-    data = {'show': _row(show), 'summary': _row(pr), 'images': images,
+    data = {'show': _row(show), 'summary': _row(pr), 'images': [],
             'sessions': [_row(s) for s in sessions], 'tiers': tiers_by_session}
     return ok(data)
 
